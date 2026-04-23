@@ -7,7 +7,7 @@
 1. 当前可以在本地用 `synthetic` 数据完整跑通 baseline 训练、评估和结果输出。
 2. 后续可以较平滑地接入真实 `ManiSkill` / demonstration 数据，继续作为正式 baseline 项目使用。
 
-这个项目只做 baseline，不包含 `AttnRes`。
+这个项目已经在 Diffusion Transformer Policy 的 block 残差路径中集成了 `AttnRes`，并保留了与 baseline 一致的训练与评估入口。
 
 ## 当前能力
 

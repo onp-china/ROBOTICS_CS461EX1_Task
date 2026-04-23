@@ -3,20 +3,20 @@
   "train_dataset_size": 512,
   "val_dataset_size": 128,
   "epochs": 3,
-  "total_training_time_sec": 0.5518710613250732,
+  "total_training_time_sec": 0.8773677349090576,
   "final_metrics": {
     "epoch": 3,
-    "train_mse": 0.01784514106111601,
+    "train_mse": 0.01647038370720111,
     "train_success_rate": 1.0,
-    "train_cumulative_reward": -0.10585532709956169,
-    "val_mse": 0.18718994036316872,
+    "train_cumulative_reward": -0.10143223847262561,
+    "val_mse": 0.1964962501078844,
     "val_success_rate": 0.0,
-    "val_cumulative_reward": -0.34762995690107346
+    "val_cumulative_reward": -0.35786109045147896
   },
   "artifacts": {
-    "metrics_csv": "results/full_baseline_synthetic_smoke/metrics.csv",
-    "training_curve_png": "results/full_baseline_synthetic_smoke/training_curve.png",
-    "checkpoint_pt": "results/full_baseline_synthetic_smoke/model_final.pt"
+    "metrics_csv": "results\\full_baseline_synthetic_smoke\\metrics.csv",
+    "training_curve_png": "results/full_baseline_synthetic_smoke\\training_curve.png",
+    "checkpoint_pt": "results/full_baseline_synthetic_smoke\\model_final.pt"
   },
   "notes": [
     "当前 synthetic 配置可直接运行。",
