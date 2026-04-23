@@ -1,0 +1,25 @@
+{
+  "device": "cpu",
+  "train_dataset_size": 512,
+  "val_dataset_size": 128,
+  "epochs": 3,
+  "total_training_time_sec": 0.5518710613250732,
+  "final_metrics": {
+    "epoch": 3,
+    "train_mse": 0.01784514106111601,
+    "train_success_rate": 1.0,
+    "train_cumulative_reward": -0.10585532709956169,
+    "val_mse": 0.18718994036316872,
+    "val_success_rate": 0.0,
+    "val_cumulative_reward": -0.34762995690107346
+  },
+  "artifacts": {
+    "metrics_csv": "results/full_baseline_synthetic_smoke/metrics.csv",
+    "training_curve_png": "results/full_baseline_synthetic_smoke/training_curve.png",
+    "checkpoint_pt": "results/full_baseline_synthetic_smoke/model_final.pt"
+  },
+  "notes": [
+    "当前 synthetic 配置可直接运行。",
+    "ManiSkill 正式 baseline 需要替换 demonstration 数据读取和真实评估逻辑。"
+  ]
+}
