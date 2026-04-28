@@ -98,6 +98,7 @@ class DemoNPZDataset(Dataset):
         stride: int,
         noise_std: float,
         max_diffusion_step: int,
+        action_conditioning: str,
         seed: int,
     ) -> None:
         super().__init__()
@@ -127,9 +128,16 @@ class DemoNPZDataset(Dataset):
             size=(actions.shape[0],),
             endpoint=False,
         ).astype(np.int64)
-        scale = 1.0 + diffusion_step[:, None, None] / max(1, max_diffusion_step - 1)
+        scale = (1.0 + diffusion_step[:, None, None] / max(1, max_diffusion_step - 1)).astype(np.float32)
         noise = rng.normal(size=actions.shape).astype(np.float32) * noise_std * scale
-        noisy_action = actions + noise
+        if action_conditioning == "shifted_history":
+            shifted_actions = np.zeros_like(actions, dtype=np.float32)
+            shifted_actions[:, 1:, :] = actions[:, :-1, :]
+            noisy_action = (shifted_actions + noise).astype(np.float32)
+        elif action_conditioning == "zeros":
+            noisy_action = np.zeros_like(actions, dtype=np.float32)
+        else:
+            noisy_action = (actions + noise).astype(np.float32)
 
         self.obs = torch.from_numpy(observations)
         self.noisy_action = torch.from_numpy(noisy_action)
@@ -170,6 +178,7 @@ def build_demo_npz_datasets(config: Dict) -> Tuple[Dataset, Dataset]:
         "stride": data_cfg.get("stride", data_cfg["sequence_length"]),
         "noise_std": data_cfg["noise_std"],
         "max_diffusion_step": data_cfg["max_diffusion_step"],
+        "action_conditioning": data_cfg.get("action_conditioning", "noisy_target"),
     }
     train_dataset = DemoNPZDataset(train_files, seed=config["experiment"]["seed"], **common_kwargs)
     val_dataset = DemoNPZDataset(val_files, seed=config["experiment"]["seed"] + 1, **common_kwargs)

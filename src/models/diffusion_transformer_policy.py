@@ -43,9 +43,15 @@ class BaselineTransformerBlock(nn.Module):
         )
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, attn_mask: torch.Tensor | None = None) -> torch.Tensor:
         attn_input = self.norm1(x)
-        attn_out, _ = self.attn(attn_input, attn_input, attn_input, need_weights=False)
+        attn_out, _ = self.attn(
+            attn_input,
+            attn_input,
+            attn_input,
+            need_weights=False,
+            attn_mask=attn_mask,
+        )
         x = x + self.dropout(attn_out)
 
         ffn_input = self.norm2(x)
@@ -96,12 +102,17 @@ class BaselineDiffusionTransformerPolicy(nn.Module):
         if obs.shape[:2] != noisy_action.shape[:2]:
             raise ValueError("obs 与 noisy_action 的 batch 和序列长度必须一致。")
 
+        sequence_length = obs.shape[1]
+        causal_mask = torch.triu(
+            torch.ones((sequence_length, sequence_length), device=obs.device, dtype=torch.bool),
+            diagonal=1,
+        )
         x = self.obs_proj(obs) + self.action_proj(noisy_action)
         time_emb = self.time_proj(self.time_embedding(diffusion_step)).unsqueeze(1)
         x = x + time_emb
 
         for block in self.blocks:
-            x = block(x)
+            x = block(x, attn_mask=causal_mask)
 
         pred_action = self.output_head(x)
         return pred_action, {}

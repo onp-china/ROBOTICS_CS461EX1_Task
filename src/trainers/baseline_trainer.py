@@ -12,6 +12,7 @@ from src.eval.metrics import compute_batch_metrics
 from src.eval.visualize import save_training_curves
 from src.models.diffusion_transformer_policy import BaselineDiffusionTransformerPolicy
 from src.utils.config import load_config, save_config
+from src.utils.device import get_default_device
 from src.utils.io import write_history_csv, write_summary_json
 from src.utils.seed import set_seed
 
@@ -36,7 +37,7 @@ def run_training(config_path: str) -> None:
     os.makedirs(output_dir, exist_ok=True)
     save_config(config, os.path.join(output_dir, "resolved_config.yaml"))
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_default_device()
     train_dataset, val_dataset = build_datasets(config)
     if len(train_dataset) == 0 or len(val_dataset) == 0:
         raise ValueError("训练集或验证集为空，请检查 demonstration 数据和切窗配置。")
