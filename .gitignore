@@ -2,3 +2,5 @@
 .cursor/
 __pycache__/
 *.pyc
+data/robomimic_lift_state_smoke/
+results/robomimic_lift_state_smoke/

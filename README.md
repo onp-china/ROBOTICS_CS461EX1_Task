@@ -1,71 +1,124 @@
-# Full Baseline Project
+# Diffusion Policy Baseline Project
 
-这是一个面向正式实验过渡的 baseline 项目。
+这是一个面向课程实验的 baseline 工程，核心目标是用统一的训练主干快速验证 `Diffusion Transformer Policy` 在不同仿真数据来源上的表现。
 
-它的设计目标有两层：
+当前推荐路线已经调整为：
 
-1. 当前可以在本地用 `synthetic` 数据完整跑通 baseline 训练、评估和结果输出。
-2. 后续可以较平滑地接入真实 `ManiSkill` / demonstration 数据，继续作为正式 baseline 项目使用。
+- 正式实验优先走 `robomimic low-dim state -> npz -> offline train / eval`
+- 当前自定义 `MuJoCo two-finger push` 保留为 smoke / 回归测试
+- `synthetic` 数据继续保留为最小可运行教学入口
 
-这个项目只做 baseline，不包含 `AttnRes`。
+项目只做 baseline，不包含 `AttnRes`。
 
 ## 当前能力
 
-- 训练一个教学版 baseline `Diffusion Transformer Policy`
+- 训练教学版 `Diffusion Transformer Policy`
 - 保存配置、指标、曲线、checkpoint、summary
-- 支持 `synthetic` 数据模式
-- 预留 `maniskill_demo_npz` 和 `maniskill_stub` 接口
-- 支持从 `.npz` demonstration 轨迹切出训练窗口
+- 支持 `synthetic` 数据 smoke
+- 支持读取统一格式的 demonstration `.npz`
+- 支持把 `robomimic` low-dim HDF5 转成当前项目使用的 `.npz`
+- 支持把 replay 后的 ManiSkill `trajectory.h5` 转成当前项目使用的 `.npz`
+- 支持 MuJoCo push smoke 的数据生成、离线评估和闭环 rollout
+- 支持 `episode_lengths`，会在切窗前自动去掉 padding 区域
+
+## 当前推荐的三条路线
+
+### 1. `synthetic`
+
+用途：
+
+- 最快确认训练脚本、模型、结果落盘是否正常
+
+特点：
+
+- 不依赖真实 demonstration
+- 最适合第一次跑通工程
+
+### 2. `robomimic low-dim state`
+
+用途：
+
+- 当前推荐的正式仿真 baseline 主线
+
+特点：
+
+- 更接近标准 manipulation benchmark
+- 直接服务于后续 diffusion policy 实验
+- 当前已经支持 `HDF5 -> npz -> inspect -> offline train -> offline eval`
+- 当前还没有接 robomimic 标准环境的闭环 rollout bridge
+
+### 3. `MuJoCo two-finger push smoke`
+
+用途：
+
+- 本地回归测试
+- 演示从数据生成到闭环 rollout 的完整链路
+
+特点：
+
+- 环境简单、可控
+- 不是标准 benchmark
+- 更适合教学和链路验证，不建议作为正式主实验环境
 
 ## 目录结构
 
 ```text
-full_baseline_project/
+ROBOTICS_CS461EX1_Task/
 ├── configs/
-│   ├── baseline_synthetic.yaml
 │   ├── baseline_maniskill_template.yaml
-│   └── pickcube_state_demo_template.yaml
+│   ├── baseline_synthetic.yaml
+│   ├── mujoco_two_finger_push_smoke.yaml
+│   ├── pickcube_state_demo_template.yaml
+│   └── robomimic_lift_state_smoke.yaml
 ├── docs/
 │   ├── migration_notes.md
-│   └── pickcube_state_demo_spec.md
+│   ├── pickcube_state_demo_spec.md
+│   └── robomimic_state_demo_spec.md
 ├── notebooks/
-├── results/
-├── requirements.txt
 ├── scripts/
+│   ├── convert_maniskill_h5_to_npz.py
+│   ├── convert_robomimic_hdf5_to_npz.py
 │   ├── evaluate.py
+│   ├── evaluate_push_rollout.py
+│   ├── generate_mujoco_push_demos.py
+│   ├── inspect_demo.py
 │   ├── show_config.py
 │   └── train.py
-└── src/
-    ├── adapters/
-    │   ├── demo_npz.py
-    │   └── maniskill_stub.py
-    ├── data/
-    │   ├── builder.py
-    │   └── synthetic.py
-    ├── eval/
-    │   ├── evaluator.py
-    │   ├── metrics.py
-    │   └── visualize.py
-    ├── models/
-    │   └── diffusion_transformer_policy.py
-    ├── trainers/
-    │   └── baseline_trainer.py
-    └── utils/
-        ├── config.py
-        ├── io.py
-        └── seed.py
+├── src/
+│   ├── adapters/
+│   │   ├── demo_npz.py
+│   │   ├── maniskill_stub.py
+│   │   └── robomimic_hdf5.py
+│   ├── data/
+│   ├── envs/
+│   ├── eval/
+│   ├── models/
+│   ├── trainers/
+│   └── utils/
+├── README.md
+└── README_MUJOCO.md
 ```
 
 ## 安装
 
+推荐使用仓库内的 `robot` 虚拟环境，或者自己创建一个新 venv。
+
 ```bash
-cd /Users/kiki/Documents/Codex/2026-04-22-files-mentioned-by-the-user-proposal/full_baseline_project
-python -m venv .venv
-source .venv/bin/activate
+cd /Users/zzzgys/Desktop/robot/ROBOTICS_CS461EX1_Task
+python -m venv robot
+source robot/bin/activate
 pip install -r requirements.txt
 ```
 
-## 运行
+如果你主要跑 MuJoCo smoke，也可以继续使用：
+
+```bash
+pip install -r requirements_mujoco.txt
+```
+
+## 快速开始
+
+### A. 最小 smoke：`synthetic`
 
 查看配置：
 
@@ -87,55 +140,183 @@ python scripts/evaluate.py \
   --checkpoint results/full_baseline_synthetic/model_final.pt
 ```
 
-检查 demonstration 数据：
+### B. 推荐主线：`robomimic low-dim`
+
+1. 把 robomimic HDF5 转成项目统一的 `.npz`
 
 ```bash
-python scripts/inspect_demo.py --config configs/baseline_maniskill_template.yaml
+python scripts/convert_robomimic_hdf5_to_npz.py \
+  --input-hdf5 /path/to/low_dim_v141.hdf5 \
+  --obs-keys robot0_eef_pos,robot0_eef_quat,robot0_gripper_qpos,object \
+  --output-npz data/robomimic_lift_state_smoke/lift_low_dim.npz
 ```
 
-把 replay 后的 ManiSkill `trajectory.h5` 转成 baseline `.npz`：
+2. 检查转换结果
 
 ```bash
-python scripts/convert_maniskill_h5_to_npz.py \
-  --input-h5 /path/to/trajectory.state.pd_ee_delta_pose.h5 \
-  --output-npz /path/to/pickcube_state_demo.npz
+python scripts/inspect_demo.py --config configs/robomimic_lift_state_smoke.yaml
 ```
 
-## 两套配置的区别
+3. 训练
 
-### `baseline_synthetic.yaml`
+```bash
+python scripts/train.py --config configs/robomimic_lift_state_smoke.yaml
+```
 
-这是当前可直接运行的版本，适合学习 baseline 和验证训练逻辑。
+4. 离线评估
 
-### `baseline_maniskill_template.yaml`
+```bash
+python scripts/evaluate.py \
+  --config configs/robomimic_lift_state_smoke.yaml \
+  --checkpoint results/robomimic_lift_state_smoke/model_final.pt
+```
 
-这是未来正式版本的模板配置。
-只要你把 `demo_root` 改成真实 `.npz` demonstrations 所在目录，并保证字段名匹配，就可以直接走项目的数据读取逻辑。
+更详细的数据规范见：
 
-当前优先支持两种输入形状：
+- [robomimic_state_demo_spec.md](/Users/zzzgys/Desktop/robot/ROBOTICS_CS461EX1_Task/docs/robomimic_state_demo_spec.md)
 
-- `[num_episodes, episode_len, dim]`
-- `[num_steps, dim]`
+### C. MuJoCo push smoke
 
-### `pickcube_state_demo_template.yaml`
+1. 生成 demonstration
 
-这是我推荐你作为第一版真实 baseline 的起点配置：
+```bash
+python scripts/generate_mujoco_push_demos.py \
+  --config configs/mujoco_two_finger_push_smoke.yaml
+```
 
-- 任务：`PickCube-v1`
-- 观测：`state`
-- demonstration：`.npz`
+2. 检查数据
 
-建议你优先围绕这套配置准备数据。
+```bash
+python scripts/inspect_demo.py \
+  --config configs/mujoco_two_finger_push_smoke.yaml
+```
 
-## 之后接真实 baseline 要改哪里
+3. 训练
 
-重点文件：
+```bash
+MPLCONFIGDIR=/tmp/matplotlib \
+python scripts/train.py \
+  --config configs/mujoco_two_finger_push_smoke.yaml
+```
 
-- `src/adapters/maniskill_stub.py`
-- `src/adapters/demo_npz.py`
-- `src/data/builder.py`
-- `src/models/diffusion_transformer_policy.py`
+4. 离线评估
 
-## 说明
+```bash
+python scripts/evaluate.py \
+  --config configs/mujoco_two_finger_push_smoke.yaml \
+  --checkpoint results/mujoco_two_finger_push_smoke/model_final.pt
+```
 
-当前项目依然不是官方仓库的原样复现，而是一个为正式实验准备的本地 baseline 工程。
+5. 闭环 rollout
+
+```bash
+python scripts/evaluate_push_rollout.py \
+  --config configs/mujoco_two_finger_push_smoke.yaml \
+  --checkpoint results/mujoco_two_finger_push_smoke/model_final.pt
+```
+
+MuJoCo 细节说明见：
+
+- [README_MUJOCO.md](/Users/zzzgys/Desktop/robot/ROBOTICS_CS461EX1_Task/README_MUJOCO.md)
+
+## 数据格式
+
+当前训练主干统一读取 `.npz`，最小字段为：
+
+- `observations`
+- `actions`
+
+推荐附加字段：
+
+- `episode_lengths`
+- `success`
+- `rewards`
+- `task_name`
+- `obs_mode`
+- `control_mode`
+
+支持两种基本形状：
+
+- `observations/actions: [T, D]`
+- `observations/actions: [E, T, D]`
+
+如果是 padding 后堆叠的多条轨迹，建议同时提供：
+
+- `episode_lengths: [E]`
+
+当前读取器会先按 `episode_lengths` 截断每条轨迹，再切训练窗口。
+
+## 关键配置
+
+### `configs/baseline_synthetic.yaml`
+
+用途：
+
+- 工程最小可运行入口
+
+### `configs/robomimic_lift_state_smoke.yaml`
+
+用途：
+
+- 当前推荐的纯仿真 diffusion policy 起点配置
+
+关键点：
+
+- 任务：`Lift`
+- 输入：`low_dim state`
+- 数据来源：`robomimic HDF5 -> npz`
+- 当前范围：`offline train + offline eval`
+
+### `configs/mujoco_two_finger_push_smoke.yaml`
+
+用途：
+
+- 回归测试和闭环链路验证
+
+关键点：
+
+- 任务：自定义 `two_finger_push`
+- 数据来源：项目内部生成的 `.npz`
+- 支持闭环 rollout
+
+### `configs/pickcube_state_demo_template.yaml`
+
+用途：
+
+- 如果后续要继续尝试 ManiSkill / PickCube state demonstration，可以以这套模板为起点
+
+### `configs/baseline_maniskill_template.yaml`
+
+用途：
+
+- 保留为 demonstration `.npz` 模板配置
+
+## 当前状态与边界
+
+- 当前最稳的正式实验入口是 `robomimic low-dim -> npz -> offline train / eval`
+- 当前还没有直接对接 robomimic 标准环境做闭环 rollout
+- MuJoCo push smoke 已经能跑通完整闭环链路，但不是标准 benchmark
+- 当前仓库依然是为课程实验整理的本地 baseline 工程，不是官方仓库原样复现
+
+MuJoCo smoke 的代表性结果：
+
+- demonstration expert success rate: `0.825`
+- offline validation mse: `0.00446`
+- offline validation success rate: `0.9918`
+- rollout success rate: `0.20`
+
+这也说明它更适合作为回归测试，而不是最终 benchmark。
+
+## 关键文件
+
+- 数据读取：[src/adapters/demo_npz.py](/Users/zzzgys/Desktop/robot/ROBOTICS_CS461EX1_Task/src/adapters/demo_npz.py)
+- robomimic 转换：[src/adapters/robomimic_hdf5.py](/Users/zzzgys/Desktop/robot/ROBOTICS_CS461EX1_Task/src/adapters/robomimic_hdf5.py)
+- MuJoCo 环境：[src/envs/mujoco_push_env.py](/Users/zzzgys/Desktop/robot/ROBOTICS_CS461EX1_Task/src/envs/mujoco_push_env.py)
+- 训练入口：[scripts/train.py](/Users/zzzgys/Desktop/robot/ROBOTICS_CS461EX1_Task/scripts/train.py)
+- 离线评估入口：[scripts/evaluate.py](/Users/zzzgys/Desktop/robot/ROBOTICS_CS461EX1_Task/scripts/evaluate.py)
+
+## 相关文档
+
+- [migration_notes.md](/Users/zzzgys/Desktop/robot/ROBOTICS_CS461EX1_Task/docs/migration_notes.md)
+- [pickcube_state_demo_spec.md](/Users/zzzgys/Desktop/robot/ROBOTICS_CS461EX1_Task/docs/pickcube_state_demo_spec.md)
+- [robomimic_state_demo_spec.md](/Users/zzzgys/Desktop/robot/ROBOTICS_CS461EX1_Task/docs/robomimic_state_demo_spec.md)

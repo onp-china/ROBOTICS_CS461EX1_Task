@@ -13,7 +13,7 @@ from src.utils.config import load_config
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="检查 ManiSkill demonstration npz 数据。")
+    parser = argparse.ArgumentParser(description="检查 demonstration npz 数据。")
     parser.add_argument("--config", required=True, type=str, help="配置文件路径。")
     args = parser.parse_args()
 

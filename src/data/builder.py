@@ -32,7 +32,12 @@ def build_datasets(config: Dict) -> Tuple[Dataset, Dataset]:
         )
         return train_dataset, val_dataset
 
-    if dataset_type in {"maniskill_demo_npz", "demo_npz", "mujoco_push_demo_npz"}:
+    if dataset_type in {
+        "maniskill_demo_npz",
+        "demo_npz",
+        "mujoco_push_demo_npz",
+        "robomimic_demo_npz",
+    }:
         return build_demo_npz_datasets(config)
 
     if dataset_type == "maniskill_stub":
