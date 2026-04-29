@@ -9,7 +9,7 @@ keypoint_dim: 3
 obs_keys: &obs_keys ['object', 'robot0_eef_pos', 'robot0_eef_quat', 'robot0_gripper_qpos']
 task_name: &task_name three_piece_assembly_d0
 abs_action: &abs_action True
-dataset_path: &dataset_path /Users/zzzgys/Desktop/robot/ROBOTICS_CS461EX1_Task/mydiffusion/data/mimicgen/processed/three_piece_assembly_d0/low_dim_abs.hdf5
+dataset_path: &dataset_path ${oc.env:MYDIFFUSION_DATA_DIR,mydiffusion/data}/mimicgen/processed/three_piece_assembly_d0/low_dim_abs.hdf5
 
 env_runner:
   _target_: diffusion_policy.env_runner.robomimic_lowdim_runner.RobomimicLowdimRunner

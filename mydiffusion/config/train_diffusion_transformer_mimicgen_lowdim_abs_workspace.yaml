@@ -124,14 +124,14 @@ checkpoint:
   save_last_snapshot: False
 
 multi_run:
-  run_dir: /Users/zzzgys/Desktop/robot/ROBOTICS_CS461EX1_Task/mydiffusion/outputs/${task.name}/${training.seed}
+  run_dir: ${oc.env:MYDIFFUSION_OUTPUTS_DIR,mydiffusion/outputs}/${task.name}/${training.seed}
   wandb_name_base: ${task_name}_seed${training.seed}
 
 hydra:
   job:
     override_dirname: ${name}
   run:
-    dir: /Users/zzzgys/Desktop/robot/ROBOTICS_CS461EX1_Task/mydiffusion/outputs/${task.name}/${training.seed}
+    dir: ${multi_run.run_dir}
   sweep:
-    dir: /Users/zzzgys/Desktop/robot/ROBOTICS_CS461EX1_Task/mydiffusion/outputs/${task.name}/${training.seed}
+    dir: ${multi_run.run_dir}
     subdir: ${hydra.job.num}
