@@ -1,6 +1,24 @@
 .conda-ms3/
 .cursor/
+/robot311/
 __pycache__/
 *.pyc
-data/robomimic_lift_state_smoke/
-results/robomimic_lift_state_smoke/
+.DS_Store
+
+# Local datasets, generated outputs, and vendored repos.
+/data/
+/results/
+/diffusion_policy/
+
+# Keep placeholder files when these directories are used locally.
+/mydiffusion/data/*
+!/mydiffusion/data/.gitkeep
+/mydiffusion/outputs/*
+!/mydiffusion/outputs/.gitkeep
+/mydiffusion/reports/*
+!/mydiffusion/reports/.gitkeep
+/mydiffusion/wandb/*
+!/mydiffusion/wandb/.gitkeep
+
+# Ignore accidental duplicate ignore file created locally.
+/.gitignore 2

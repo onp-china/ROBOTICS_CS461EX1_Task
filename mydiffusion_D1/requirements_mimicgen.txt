@@ -1,0 +1,43 @@
+# Tested helper requirements for the self-contained MimicGen D1 baseline on macOS
+# (Apple Silicon) with Python 3.11.
+#
+# Install with:
+#   python -m pip install -r mydiffusion_D1/requirements_mimicgen.txt
+#
+# Then install robomimic / robosuite / mimicgen using the README commands.
+
+hydra-core>=1.3,<1.4
+omegaconf>=2.3,<2.4
+wandb>=0.16
+h5py>=3.10
+imageio>=2.34.0
+imageio-ffmpeg>=0.5.1
+torch==2.11.0
+torchvision==0.26.0
+psutil>=7.0
+tensorboard>=2.20
+tensorboardX>=2.6
+pandas>=2.2
+tqdm>=4.66
+mujoco==2.3.2
+gym==0.26.2
+zarr>=2.17,<3
+numcodecs>=0.12
+numba>=0.60
+dill>=0.3.8
+einops>=0.8
+diffusers>=0.30
+scipy>=1.13
+av>=12.0
+
+# Do not install `robomimic==0.2.0` with dependencies on macOS unless you
+# specifically want to debug egl_probe / CMake build issues.
+# Recommended:
+#   python -m pip install --no-deps robomimic==0.2.0
+#
+# MimicGen does not support robosuite v1.5+.
+# Recommended:
+#   python -m pip install robosuite==1.4.1
+#
+# MimicGen itself is installed from a local checkout:
+#   python -m pip install -e /Users/zzzgys/Desktop/robot/mimicgen

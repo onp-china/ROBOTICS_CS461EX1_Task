@@ -1,0 +1,10 @@
+data/*
+!data/.gitkeep
+outputs/*
+!outputs/.gitkeep
+reports/*
+!reports/.gitkeep
+wandb/*
+!wandb/.gitkeep
+__pycache__/
+*.pyc
