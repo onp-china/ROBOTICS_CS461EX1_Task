@@ -149,55 +149,42 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                 step_log = dict()
                 # ========= train for this epoch ==========
                 train_losses = list()
-                with tqdm.tqdm(train_dataloader, desc=f"Training epoch {self.epoch}", 
-                        leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
-                    for batch_idx, batch in enumerate(tepoch):
-                        # device transfer
-                        batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
-                        if train_sampling_batch is None:
-                            train_sampling_batch = batch
+                for batch_idx, batch in enumerate(train_dataloader):
+                    # device transfer
+                    batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
+                    if train_sampling_batch is None:
+                        train_sampling_batch = batch
 
-                        # compute loss
-                        raw_loss = self.model.compute_loss(batch)
-                        loss = raw_loss / cfg.training.gradient_accumulate_every
-                        loss.backward()
+                    # compute loss
+                    raw_loss = self.model.compute_loss(batch)
+                    loss = raw_loss / cfg.training.gradient_accumulate_every
+                    loss.backward()
 
-                        # step optimizer
-                        if self.global_step % cfg.training.gradient_accumulate_every == 0:
-                            self.optimizer.step()
-                            self.optimizer.zero_grad()
-                            lr_scheduler.step()
+                    # step optimizer
+                    if self.global_step % cfg.training.gradient_accumulate_every == 0:
+                        self.optimizer.step()
+                        self.optimizer.zero_grad()
+                        lr_scheduler.step()
 
-                        # update ema
-                        if cfg.training.use_ema:
-                            ema.step(self.model)
+                    # update ema
+                    if cfg.training.use_ema:
+                        ema.step(self.model)
 
-                        # logging
-                        raw_loss_cpu = raw_loss.item()
-                        tepoch.set_postfix(loss=raw_loss_cpu, refresh=False)
-                        train_losses.append(raw_loss_cpu)
-                        step_log = {
-                            'train_loss': raw_loss_cpu,
-                            'global_step': self.global_step,
-                            'epoch': self.epoch,
-                            'lr': lr_scheduler.get_last_lr()[0]
-                        }
+                    train_losses.append(raw_loss.item())
 
-                        is_last_batch = (batch_idx == (len(train_dataloader)-1))
-                        if not is_last_batch:
-                            # log of last step is combined with validation and rollout
-                            wandb_run.log(step_log, step=self.global_step)
-                            json_logger.log(step_log)
-                            self.global_step += 1
-
-                        if (cfg.training.max_train_steps is not None) \
-                            and batch_idx >= (cfg.training.max_train_steps-1):
-                            break
+                    if (cfg.training.max_train_steps is not None) \
+                        and batch_idx >= (cfg.training.max_train_steps-1):
+                        break
 
                 # at the end of each epoch
                 # replace train_loss with epoch average
                 train_loss = np.mean(train_losses)
-                step_log['train_loss'] = train_loss
+                step_log = {
+                    'train_loss': train_loss,
+                    'global_step': self.global_step,
+                    'epoch': self.epoch,
+                    'lr': lr_scheduler.get_last_lr()[0]
+                }
 
                 # ========= eval for this epoch ==========
                 policy = self.model
@@ -222,15 +209,13 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                 if (self.epoch % cfg.training.val_every) == 0:
                     with torch.no_grad():
                         val_losses = list()
-                        with tqdm.tqdm(val_dataloader, desc=f"Validation epoch {self.epoch}", 
-                                leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
-                            for batch_idx, batch in enumerate(tepoch):
-                                batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
-                                loss = self.model.compute_loss(batch)
-                                val_losses.append(loss)
-                                if (cfg.training.max_val_steps is not None) \
-                                    and batch_idx >= (cfg.training.max_val_steps-1):
-                                    break
+                        for batch_idx, batch in enumerate(val_dataloader):
+                            batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
+                            loss = self.model.compute_loss(batch)
+                            val_losses.append(loss)
+                            if (cfg.training.max_val_steps is not None) \
+                                and batch_idx >= (cfg.training.max_val_steps-1):
+                                break
                         if len(val_losses) > 0:
                             val_loss = torch.mean(torch.tensor(val_losses)).item()
                             # log epoch average validation loss
@@ -286,9 +271,21 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                 policy.train()
 
                 # end of epoch
-                # log of last step is combined with validation and rollout
                 wandb_run.log(step_log, step=self.global_step)
                 json_logger.log(step_log)
+                print(
+                    f"[Epoch {self.epoch}] "
+                    f"train_loss={step_log['train_loss']:.6f} "
+                    + (
+                        f"val_loss={step_log['val_loss']:.6f} "
+                        if 'val_loss' in step_log else ""
+                    )
+                    + (
+                        f"train_action_mse_error={step_log['train_action_mse_error']:.6f} "
+                        if 'train_action_mse_error' in step_log else ""
+                    )
+                    + f"lr={step_log['lr']:.6e}"
+                )
                 self.global_step += 1
                 self.epoch += 1
 
