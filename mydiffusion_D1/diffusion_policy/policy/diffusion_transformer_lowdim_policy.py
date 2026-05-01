@@ -22,6 +22,9 @@ class DiffusionTransformerLowdimPolicy(BaseLowdimPolicy):
             num_inference_steps=None,
             obs_as_cond=False,
             pred_action_steps_only=False,
+            use_distance_weighted_loss=False,
+            distance_weight_alpha=3.0,
+            distance_weight_sigma=0.06,
             # parameters passed to step
             **kwargs):
         super().__init__()
@@ -45,6 +48,9 @@ class DiffusionTransformerLowdimPolicy(BaseLowdimPolicy):
         self.n_obs_steps = n_obs_steps
         self.obs_as_cond = obs_as_cond
         self.pred_action_steps_only = pred_action_steps_only
+        self.use_distance_weighted_loss = use_distance_weighted_loss
+        self.distance_weight_alpha = float(distance_weight_alpha)
+        self.distance_weight_sigma = float(distance_weight_sigma)
         self.kwargs = kwargs
 
         if num_inference_steps is None:
@@ -229,6 +235,25 @@ class DiffusionTransformerLowdimPolicy(BaseLowdimPolicy):
 
         loss = F.mse_loss(pred, target, reduction='none')
         loss = loss * loss_mask.type(loss.dtype)
-        loss = reduce(loss, 'b ... -> b (...)', 'mean')
+        loss = reduce(loss, 'b t d -> b t', 'mean')
+
+        if self.use_distance_weighted_loss:
+            assert 'eef_pos' in batch and 'object_pos' in batch, (
+                "Distance-weighted loss requires `eef_pos` and `object_pos` in the batch."
+            )
+            eef_pos = batch['eef_pos'].to(loss.device, non_blocking=True).float()
+            object_pos = batch['object_pos'].to(loss.device, non_blocking=True).float()
+            if self.pred_action_steps_only:
+                To = self.n_obs_steps
+                start = To - 1
+                end = start + self.n_action_steps
+                eef_pos = eef_pos[:, start:end]
+                object_pos = object_pos[:, start:end]
+            dist = torch.linalg.norm(eef_pos - object_pos, dim=-1)
+            sigma = max(self.distance_weight_sigma, 1.0e-6)
+            weights = 1.0 + self.distance_weight_alpha * torch.exp(-dist / sigma)
+            loss = loss * weights
+
+        loss = reduce(loss, 'b t -> b', 'mean')
         loss = loss.mean()
         return loss

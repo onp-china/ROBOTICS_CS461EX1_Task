@@ -142,6 +142,13 @@ def _data_to_obs(raw_obs, raw_actions, obs_keys, abs_action, rotation_transforme
     obs = np.concatenate([
         raw_obs[key] for key in obs_keys
     ], axis=-1).astype(np.float32)
+    eef_pos = np.asarray(raw_obs['robot0_eef_pos'], dtype=np.float32)
+    object_raw = np.asarray(raw_obs['object'], dtype=np.float32)
+    if object_raw.ndim != 2 or object_raw.shape[-1] < 3:
+        raise ValueError(
+            f"Expected `object` observation to have shape [T, D>=3], got {object_raw.shape}."
+        )
+    object_pos = object_raw[..., :3].astype(np.float32)
 
     if abs_action:
         is_dual_arm = False
@@ -163,6 +170,8 @@ def _data_to_obs(raw_obs, raw_actions, obs_keys, abs_action, rotation_transforme
     
     data = {
         'obs': obs,
-        'action': raw_actions
+        'action': raw_actions,
+        'eef_pos': eef_pos,
+        'object_pos': object_pos,
     }
     return data
