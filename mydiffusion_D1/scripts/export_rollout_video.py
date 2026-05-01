@@ -13,7 +13,7 @@ MYDIFFUSION_D1_ROOT = Path(__file__).resolve().parents[1]
 if str(MYDIFFUSION_D1_ROOT) not in sys.path:
     sys.path.insert(0, str(MYDIFFUSION_D1_ROOT))
 
-from _runtime import add_repo_paths, fail, require_modules
+from _runtime import add_repo_paths, fail, register_mimicgen_environments, require_modules
 
 
 def parse_args() -> argparse.Namespace:
@@ -58,6 +58,7 @@ def main() -> None:
     add_repo_paths()
     args = parse_args()
     require_modules(("hydra", "wandb", "robomimic", "torch", "h5py", "dill", "av", "diffusers", "einops", "scipy", "gym"))
+    register_mimicgen_environments()
 
     checkpoint_path = Path(args.checkpoint).expanduser().resolve()
     if not checkpoint_path.is_file():
