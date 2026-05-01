@@ -1,7 +1,6 @@
 defaults:
   - train_diffusion_transformer_mimicgen_d1_lowdim_abs_workspace
   - _self_
-  - task: mug_cleanup_d1_lowdim_abs
 
 name: train_diffusion_transformer_mimicgen_d1_mug_cleanup_loc_tuned
 exp_name: "mug_loc_tuned_e200"
