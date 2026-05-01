@@ -1,0 +1,45 @@
+experiment:
+  name: "pickcube_baseline_run"
+  seed: 42
+  output_dir: "results/pickcube_baseline_run"
+
+data:
+  dataset_type: "maniskill_demo_npz"
+  task_name: "PickCube-v1"
+  demo_format: "npz"
+  demo_root: "data/mujoco_two_finger_push_smoke_demos"
+  train_split: 0.9
+  obs_key: "observations"
+  action_key: "actions"
+  sequence_length: 16
+  stride: 4
+  obs_dim: 18
+  action_dim: 4
+  max_diffusion_step: 32
+  noise_std: 0.05
+  observation_mode: "state"
+  control_mode: "pd_ee_delta_pose"
+  expected_obs_rank: 3
+  expected_action_rank: 3
+
+model:
+  hidden_dim: 128
+  num_layers: 4
+  num_heads: 4
+  dropout: 0.1
+  max_diffusion_step: 32
+  attnres_mode: "none"
+  attnres_block_size: 1
+
+training:
+  batch_size: 32
+  epochs: 8
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  grad_clip_norm: 1.0
+  log_interval: 20
+  success_threshold: 0.20
+
+evaluation:
+  num_rollouts: 100
+  save_plots: true

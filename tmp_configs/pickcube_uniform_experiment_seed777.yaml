@@ -1,0 +1,41 @@
+data:
+  action_dim: 4
+  action_key: actions
+  control_mode: pd_ee_delta_pose
+  dataset_type: maniskill_demo_npz
+  demo_format: npz
+  demo_root: data/mujoco_two_finger_push_smoke_demos
+  expected_action_rank: 3
+  expected_obs_rank: 3
+  max_diffusion_step: 32
+  noise_std: 0.05
+  obs_dim: 18
+  obs_key: observations
+  observation_mode: state
+  sequence_length: 16
+  stride: 4
+  task_name: PickCube-v1
+  train_split: 0.9
+evaluation:
+  num_rollouts: 100
+  save_plots: true
+experiment:
+  name: pickcube_uniform_run
+  output_dir: results/pickcube_uniform_run_seed777
+  seed: 777
+model:
+  attnres_block_size: 4
+  attnres_mode: uniform_attention
+  dropout: 0.1
+  hidden_dim: 128
+  max_diffusion_step: 32
+  num_heads: 4
+  num_layers: 4
+training:
+  batch_size: 32
+  epochs: 8
+  grad_clip_norm: 1.0
+  learning_rate: 0.0001
+  log_interval: 20
+  success_threshold: 0.2
+  weight_decay: 0.0001

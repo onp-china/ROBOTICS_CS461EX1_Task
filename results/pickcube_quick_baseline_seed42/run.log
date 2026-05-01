@@ -1,0 +1,32 @@
+Traceback (most recent call last):
+  File "D:\ROBOTICS_CS461EX1_Task\scripts\train.py", line 21, in <module>
+    main()
+    ~~~~^^
+  File "D:\ROBOTICS_CS461EX1_Task\scripts\train.py", line 17, in main
+    run_training(args.config)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "D:\ROBOTICS_CS461EX1_Task\src\trainers\baseline_trainer.py", line 43, in run_training
+    train_dataset, val_dataset = build_datasets(config)
+                                 ~~~~~~~~~~~~~~^^^^^^^^
+  File "D:\ROBOTICS_CS461EX1_Task\src\data\builder.py", line 36, in build_datasets
+    return build_demo_npz_datasets(config)
+  File "D:\ROBOTICS_CS461EX1_Task\src\adapters\demo_npz.py", line 174, in build_demo_npz_datasets
+    train_dataset = DemoNPZDataset(train_files, seed=config["experiment"]["seed"], **common_kwargs)
+  File "D:\ROBOTICS_CS461EX1_Task\src\adapters\demo_npz.py", line 110, in __init__
+    obs_chunk, action_chunk, metadata = _load_npz_file(
+                                        ~~~~~~~~~~~~~~^
+        file=file,
+        ^^^^^^^^^^
+    ...<3 lines>...
+        stride=stride,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\ROBOTICS_CS461EX1_Task\src\adapters\demo_npz.py", line 71, in _load_npz_file
+    obs_windows, action_windows = _slice_windows(observations, actions, sequence_length, stride)
+                                  ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\ROBOTICS_CS461EX1_Task\src\adapters\demo_npz.py", line 46, in _slice_windows
+    raise ValueError(
+        f"没有切出任何窗口，请检查 sequence_length={sequence_length} 是否大于轨迹长度。"
+    )
+ValueError: 没有切出任何窗口，请检查 sequence_length=16 是否大于轨迹长度。

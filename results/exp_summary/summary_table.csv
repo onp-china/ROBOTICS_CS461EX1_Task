@@ -1,0 +1,3 @@
+experiment,seed,val_mse,val_success_rate,val_cumulative_reward,folder
+full_baseline_synthetic_smoke,,0.1964962501078844,0.0,-0.35786109045147896,results\full_baseline_synthetic_smoke
+mujoco_two_finger_push_smoke,,0.004460343858227134,0.9918032884597778,-0.03460688516497612,results\mujoco_two_finger_push_smoke

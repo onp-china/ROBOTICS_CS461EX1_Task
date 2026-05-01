@@ -17,14 +17,17 @@ from src.utils.seed import set_seed
 
 
 def build_model(config: Dict) -> BaselineDiffusionTransformerPolicy:
+    model_cfg = config.get("model", {})
     return BaselineDiffusionTransformerPolicy(
         obs_dim=config["data"]["obs_dim"],
         action_dim=config["data"]["action_dim"],
-        hidden_dim=config["model"]["hidden_dim"],
-        num_layers=config["model"]["num_layers"],
-        num_heads=config["model"]["num_heads"],
-        dropout=config["model"]["dropout"],
-        max_diffusion_step=config["model"]["max_diffusion_step"],
+        hidden_dim=model_cfg.get("hidden_dim"),
+        num_layers=model_cfg.get("num_layers"),
+        num_heads=model_cfg.get("num_heads"),
+        dropout=model_cfg.get("dropout"),
+        max_diffusion_step=model_cfg.get("max_diffusion_step"),
+        attnres_mode=model_cfg.get("attnres_mode", "block_attnres"),
+        attnres_block_size=model_cfg.get("attnres_block_size", 4),
     )
 
 

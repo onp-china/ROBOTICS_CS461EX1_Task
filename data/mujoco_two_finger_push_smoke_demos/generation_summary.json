@@ -1,0 +1,6 @@
+{
+  "output_dir": "data\\mujoco_two_finger_push_smoke_demos",
+  "num_episodes": 160,
+  "expert_success_rate": 0.825,
+  "mean_episode_length": 21.74375
+}
