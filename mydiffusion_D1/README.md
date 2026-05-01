@@ -115,7 +115,14 @@ python mydiffusion_D1/train.py \
   training.device=mps
 ```
 
-默认训练不会在训练过程中自动创建 rollout 环境，但当前配置会在训练结束后自动挑选 `val_loss` 最优的 checkpoint，并额外导出一条 rollout 视频到：
+默认训练不会在训练过程中自动创建 rollout 环境，但当前配置会在训练结束后自动优先根据 rollout 表现挑选 checkpoint：
+
+- 更高的 `test/contact_rate`
+- 更小的 `test/mean_min_eef_object_distance`
+- 更大的 `test/mean_object_displacement`
+- 再回退参考 `test/mean_score` 与 `val_loss`
+
+然后额外导出一条 rollout 视频到：
 
 - `mydiffusion_D1/outputs/<task_config>/<seed>/best_epoch_rollout.mp4`
 - `mydiffusion_D1/outputs/<task_config>/<seed>/curves/<task_config>_seed<seed>_loss_curve.png`

@@ -61,6 +61,9 @@ class _SingleEnvVectorAdapter:
         if hasattr(self.env, "close"):
             self.env.close()
 
+    def get_rollout_debug_metrics(self):
+        return [self.env.get_rollout_debug_metrics()]
+
 
 def create_env(env_meta, obs_keys):
     ObsUtils.initialize_obs_modality_mapping_from_dict(
@@ -264,6 +267,7 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
         self.rotation_transformer = rotation_transformer
         self.abs_action = abs_action
         self.tqdm_interval_sec = tqdm_interval_sec
+        self.contact_distance_threshold = 0.06
 
     def run(self, policy: BaseLowdimPolicy):
         device = policy.device
@@ -356,6 +360,9 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
 
         # log
         max_rewards = collections.defaultdict(list)
+        contact_rates = collections.defaultdict(list)
+        min_distances = collections.defaultdict(list)
+        object_displacements = collections.defaultdict(list)
         log_data = dict()
         # results reported in the paper are generated using the commented out line below
         # which will only report and average metrics from first n_envs initial condition and seeds
@@ -372,6 +379,18 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
             max_rewards[prefix].append(max_reward)
             log_data[prefix+f'sim_max_reward_{seed}'] = max_reward
 
+            debug_metrics = env.call('get_rollout_debug_metrics')[i]
+            if isinstance(debug_metrics, dict):
+                contact_happened = float(bool(debug_metrics.get('contact_happened', False)))
+                min_distance = float(debug_metrics.get('min_eef_object_distance', float('nan')))
+                displacement = float(debug_metrics.get('object_displacement', 0.0))
+                contact_rates[prefix].append(contact_happened)
+                min_distances[prefix].append(min_distance)
+                object_displacements[prefix].append(displacement)
+                log_data[prefix+f'contact_happened_{seed}'] = contact_happened
+                log_data[prefix+f'min_eef_object_distance_{seed}'] = min_distance
+                log_data[prefix+f'object_displacement_{seed}'] = displacement
+
             # visualize sim
             video_path = all_video_paths[i]
             if video_path is not None:
@@ -383,6 +402,13 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
             name = prefix+'mean_score'
             value = np.mean(value)
             log_data[name] = value
+        for prefix, value in contact_rates.items():
+            log_data[prefix+'contact_rate'] = float(np.mean(value)) if value else 0.0
+        for prefix, value in min_distances.items():
+            clean = [float(v) for v in value if np.isfinite(v)]
+            log_data[prefix+'mean_min_eef_object_distance'] = float(np.mean(clean)) if clean else float('nan')
+        for prefix, value in object_displacements.items():
+            log_data[prefix+'mean_object_displacement'] = float(np.mean(value)) if value else 0.0
 
         return log_data
 

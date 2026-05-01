@@ -24,6 +24,7 @@ class RobomimicLowdimWrapper(gym.Env):
         self.render_camera_name = render_camera_name
         self.seed_state_map = dict()
         self._seed = None
+        self._last_raw_obs = None
         
         # setup spaces
         low = np.full(env.action_dimension, fill_value=-1)
@@ -46,10 +47,33 @@ class RobomimicLowdimWrapper(gym.Env):
 
     def get_observation(self):
         raw_obs = self.env.get_observation()
+        self._last_raw_obs = raw_obs
         obs = np.concatenate([
             raw_obs[key] for key in self.obs_keys
         ], axis=0)
         return obs
+
+    def get_raw_observation(self):
+        if self._last_raw_obs is None:
+            self._last_raw_obs = self.env.get_observation()
+        return self._last_raw_obs
+
+    def get_eef_position(self):
+        raw_obs = self.get_raw_observation()
+        value = raw_obs.get("robot0_eef_pos")
+        if value is None:
+            return None
+        return np.asarray(value, dtype=np.float32).reshape(-1)
+
+    def get_object_position(self):
+        raw_obs = self.get_raw_observation()
+        value = raw_obs.get("object")
+        if value is None:
+            return None
+        value = np.asarray(value, dtype=np.float32).reshape(-1)
+        if value.shape[0] < 3:
+            return None
+        return value[:3]
 
     def seed(self, seed=None):
         np.random.seed(seed=seed)
@@ -83,6 +107,7 @@ class RobomimicLowdimWrapper(gym.Env):
     
     def step(self, action):
         raw_obs, reward, done, info = self.env.step(action)
+        self._last_raw_obs = raw_obs
         obs = np.concatenate([
             raw_obs[key] for key in self.obs_keys
         ], axis=0)

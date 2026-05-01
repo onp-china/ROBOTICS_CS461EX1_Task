@@ -85,6 +85,10 @@ class MultiStepWrapper(gym.Wrapper):
         self.reward = list()
         self.done = list()
         self.info = defaultdict(lambda : deque(maxlen=n_obs_steps+1))
+        self._rollout_debug_start_object_pos = None
+        self._rollout_debug_end_object_pos = None
+        self._rollout_debug_min_distance = float("inf")
+        self._rollout_contact_threshold = 0.06
     
     def reset(self):
         """Resets the environment using kwargs."""
@@ -94,6 +98,10 @@ class MultiStepWrapper(gym.Wrapper):
         self.reward = list()
         self.done = list()
         self.info = defaultdict(lambda : deque(maxlen=self.n_obs_steps+1))
+        self._rollout_debug_start_object_pos = None
+        self._rollout_debug_end_object_pos = None
+        self._rollout_debug_min_distance = float("inf")
+        self._update_rollout_debug_metrics()
 
         obs = self._get_obs(self.n_obs_steps)
         return obs
@@ -116,6 +124,7 @@ class MultiStepWrapper(gym.Wrapper):
                 done = True
             self.done.append(done)
             self._add_info(info)
+            self._update_rollout_debug_metrics()
 
         observation = self._get_obs(self.n_obs_steps)
         reward = aggregate(self.reward, self.reward_agg_method)
@@ -160,3 +169,51 @@ class MultiStepWrapper(gym.Wrapper):
         for k, v in self.info.items():
             result[k] = list(v)
         return result
+
+    def get_rollout_debug_metrics(self):
+        min_distance = self._rollout_debug_min_distance
+        displacement = self._compute_object_displacement()
+        contact_happened = (min_distance <= self._rollout_contact_threshold) if np.isfinite(min_distance) else False
+        return {
+            "min_eef_object_distance": float(min_distance) if np.isfinite(min_distance) else float("nan"),
+            "object_displacement": float(displacement) if displacement is not None else 0.0,
+            "contact_happened": bool(contact_happened),
+        }
+
+    def _unwrap_lowdim_env(self):
+        env = self.env
+        while hasattr(env, "env"):
+            if hasattr(env, "get_eef_position") and hasattr(env, "get_object_position"):
+                return env
+            env = env.env
+        if hasattr(env, "get_eef_position") and hasattr(env, "get_object_position"):
+            return env
+        return None
+
+    def _update_rollout_debug_metrics(self):
+        env = self._unwrap_lowdim_env()
+        if env is None:
+            return
+        eef_pos = env.get_eef_position()
+        object_pos = env.get_object_position()
+        if object_pos is not None:
+            object_pos = np.asarray(object_pos, dtype=np.float32).reshape(-1)
+            if self._rollout_debug_start_object_pos is None:
+                self._rollout_debug_start_object_pos = object_pos.copy()
+            self._rollout_debug_end_object_pos = object_pos.copy()
+        if eef_pos is None or object_pos is None:
+            return
+        eef_pos = np.asarray(eef_pos, dtype=np.float32).reshape(-1)
+        if eef_pos.shape[0] < 3 or object_pos.shape[0] < 3:
+            return
+        distance = float(np.linalg.norm(eef_pos[:3] - object_pos[:3]))
+        self._rollout_debug_min_distance = min(self._rollout_debug_min_distance, distance)
+
+    def _compute_object_displacement(self):
+        if self._rollout_debug_start_object_pos is None or self._rollout_debug_end_object_pos is None:
+            return None
+        if self._rollout_debug_start_object_pos.shape[0] < 3 or self._rollout_debug_end_object_pos.shape[0] < 3:
+            return None
+        return float(np.linalg.norm(
+            self._rollout_debug_end_object_pos[:3] - self._rollout_debug_start_object_pos[:3]
+        ))
