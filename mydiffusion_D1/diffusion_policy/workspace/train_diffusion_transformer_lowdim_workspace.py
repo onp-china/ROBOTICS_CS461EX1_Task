@@ -435,6 +435,8 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                 )
                 self.global_step += 1
                 self.epoch += 1
+        if cfg.checkpoint.save_last_ckpt:
+            self.save_checkpoint()
         self.wait_for_saves()
         self._maybe_export_training_curves()
         self._maybe_export_best_rollout_video()

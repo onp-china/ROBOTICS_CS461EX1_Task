@@ -26,8 +26,13 @@ from _runtime import (
 )
 
 
-TEST_SCORE_CHECKPOINT_RE = re.compile(r"epoch=(?P<epoch>\d+)-test_mean_score=(?P<score>-?\d+(?:\.\d+)?)\.ckpt$")
-VAL_LOSS_CHECKPOINT_RE = re.compile(r"epoch=(?P<epoch>\d+)-val_loss=(?P<loss>-?\d+(?:\.\d+)?)\.ckpt$")
+CHECKPOINT_RE = re.compile(r"epoch=(?P<epoch>\d+)-(?P<metric>[A-Za-z0-9_]+)=(?P<value>-?\d+(?:\.\d+)?)\.ckpt$")
+CHECKPOINT_METRIC_MODES = {
+    "test_mean_score": "max",
+    "val_loss": "min",
+    "test_mean_min_eef_object_distance": "min",
+}
+LEGACY_EXP_NAME = "baseline"
 
 
 def parse_args() -> argparse.Namespace:
@@ -78,34 +83,81 @@ def resolve_tasks(task_filters: list[str] | None) -> list[str]:
     return [task for task in all_tasks if task in task_filters]
 
 
+def parse_checkpoint_name(checkpoint_name: str) -> tuple[int, str, float] | None:
+    match = CHECKPOINT_RE.match(checkpoint_name)
+    if not match:
+        return None
+    metric_name = str(match.group("metric"))
+    if metric_name not in CHECKPOINT_METRIC_MODES:
+        return None
+    return int(match.group("epoch")), metric_name, float(match.group("value"))
+
+
+def _improves(metric_name: str, candidate_value: float, best_value: float | None, candidate_epoch: int, best_epoch: int) -> bool:
+    if best_value is None:
+        return True
+    mode = CHECKPOINT_METRIC_MODES[metric_name]
+    if mode == "max":
+        return candidate_value > best_value or (candidate_value == best_value and candidate_epoch > best_epoch)
+    return candidate_value < best_value or (candidate_value == best_value and candidate_epoch > best_epoch)
+
+
 def discover_runs(output_root: Path, tasks: list[str], seed_filters: set[int] | None) -> list[dict]:
     runs: list[dict] = []
     for task_name in tasks:
         task_dir = output_root / task_name
         if not task_dir.is_dir():
             continue
-        for seed_dir in sorted(task_dir.iterdir(), key=lambda path: path.name):
-            if not seed_dir.is_dir():
+        for child in sorted(task_dir.iterdir(), key=lambda path: path.name):
+            if not child.is_dir():
                 continue
             try:
-                seed = int(seed_dir.name)
+                seed = int(child.name)
             except ValueError:
+                seed = None
+            if seed is not None:
+                if seed_filters is not None and seed not in seed_filters:
+                    continue
+                runs.append(
+                    {
+                        "task": task_name,
+                        "exp_name": LEGACY_EXP_NAME,
+                        "seed": seed,
+                        "run_dir": child,
+                        "log_path": child / "logs.json.txt",
+                        "media_dirs": [child / "media", child / "rollout_export" / "media", child / "best_rollout_export" / "media"],
+                    }
+                )
                 continue
-            if seed_filters is not None and seed not in seed_filters:
-                continue
-            runs.append(
-                {
-                    "task": task_name,
-                    "seed": seed,
-                    "run_dir": seed_dir,
-                    "log_path": seed_dir / "logs.json.txt",
-                    "media_dirs": [seed_dir / "media", seed_dir / "rollout_export" / "media"],
-                }
-            )
+
+            exp_name = child.name
+            for seed_dir in sorted(child.iterdir(), key=lambda path: path.name):
+                if not seed_dir.is_dir():
+                    continue
+                try:
+                    nested_seed = int(seed_dir.name)
+                except ValueError:
+                    continue
+                if seed_filters is not None and nested_seed not in seed_filters:
+                    continue
+                runs.append(
+                    {
+                        "task": task_name,
+                        "exp_name": exp_name,
+                        "seed": nested_seed,
+                        "run_dir": seed_dir,
+                        "log_path": seed_dir / "logs.json.txt",
+                        "media_dirs": [
+                            seed_dir / "media",
+                            seed_dir / "rollout_export" / "media",
+                            seed_dir / "best_rollout_export" / "media",
+                        ],
+                    }
+                )
     return runs
 
 
-def summarize_run(run_dir: Path, task_name: str, seed: int) -> dict | None:
+def summarize_run(run_dir: Path, task_name: str, exp_name: str, seed: int) -> dict | None:
     log_path = run_dir / "logs.json.txt"
     if not log_path.is_file():
         return None
@@ -117,6 +169,8 @@ def summarize_run(run_dir: Path, task_name: str, seed: int) -> dict | None:
     best_test_mean_score = None
     final_test_mean_score = None
     final_val_loss = None
+    best_test_contact_rate = None
+    best_test_mean_min_eef_object_distance = None
     for row in rows:
         if "test/mean_score" in row:
             score = float(row["test/mean_score"])
@@ -124,45 +178,34 @@ def summarize_run(run_dir: Path, task_name: str, seed: int) -> dict | None:
             best_test_mean_score = score if best_test_mean_score is None else max(best_test_mean_score, score)
         if "val_loss" in row:
             final_val_loss = float(row["val_loss"])
+        if "test/contact_rate" in row:
+            contact_rate = float(row["test/contact_rate"])
+            best_test_contact_rate = (
+                contact_rate if best_test_contact_rate is None else max(best_test_contact_rate, contact_rate)
+            )
+        if "test/mean_min_eef_object_distance" in row:
+            distance = float(row["test/mean_min_eef_object_distance"])
+            if best_test_mean_min_eef_object_distance is None or distance < best_test_mean_min_eef_object_distance:
+                best_test_mean_min_eef_object_distance = distance
 
     best_checkpoint_metric_name = None
     best_checkpoint_metric_value = None
     checkpoints_dir = run_dir / "checkpoints"
     if checkpoints_dir.is_dir():
         best_epoch = -1
-        for checkpoint in checkpoints_dir.glob("epoch=*-test_mean_score=*.ckpt"):
-            match = TEST_SCORE_CHECKPOINT_RE.match(checkpoint.name)
-            if not match:
+        for checkpoint in sorted(checkpoints_dir.glob("epoch=*-*.ckpt")):
+            parsed = parse_checkpoint_name(checkpoint.name)
+            if parsed is None:
                 continue
-            epoch = int(match.group("epoch"))
-            score = float(match.group("score"))
-            if (
-                best_checkpoint_metric_value is None
-                or score > best_checkpoint_metric_value
-                or (score == best_checkpoint_metric_value and epoch > best_epoch)
-            ):
-                best_checkpoint_metric_name = "test_mean_score"
-                best_checkpoint_metric_value = score
+            epoch, metric_name, metric_value = parsed
+            if _improves(metric_name, metric_value, best_checkpoint_metric_value, epoch, best_epoch):
+                best_checkpoint_metric_name = metric_name
+                best_checkpoint_metric_value = metric_value
                 best_epoch = epoch
-        if best_checkpoint_metric_name is None:
-            best_epoch = -1
-            for checkpoint in checkpoints_dir.glob("epoch=*-val_loss=*.ckpt"):
-                match = VAL_LOSS_CHECKPOINT_RE.match(checkpoint.name)
-                if not match:
-                    continue
-                epoch = int(match.group("epoch"))
-                val_loss = float(match.group("loss"))
-                if (
-                    best_checkpoint_metric_value is None
-                    or val_loss < best_checkpoint_metric_value
-                    or (val_loss == best_checkpoint_metric_value and epoch > best_epoch)
-                ):
-                    best_checkpoint_metric_name = "val_loss"
-                    best_checkpoint_metric_value = val_loss
-                    best_epoch = epoch
 
     return {
         "task": task_name,
+        "exp_name": exp_name,
         "seed": seed,
         "run_dir": str(run_dir),
         "best_checkpoint_metric_name": best_checkpoint_metric_name,
@@ -170,6 +213,8 @@ def summarize_run(run_dir: Path, task_name: str, seed: int) -> dict | None:
         "best_test_mean_score": best_test_mean_score,
         "final_test_mean_score": final_test_mean_score,
         "final_val_loss": final_val_loss,
+        "best_test_contact_rate": best_test_contact_rate,
+        "best_test_mean_min_eef_object_distance": best_test_mean_min_eef_object_distance,
     }
 
 
@@ -177,6 +222,7 @@ def save_summary_csv(rows: list[dict], reports_root: Path) -> Path:
     path = reports_root / "baseline_summary.csv"
     fieldnames = [
         "task",
+        "exp_name",
         "seed",
         "run_dir",
         "best_checkpoint_metric_name",
@@ -184,6 +230,8 @@ def save_summary_csv(rows: list[dict], reports_root: Path) -> Path:
         "best_test_mean_score",
         "final_test_mean_score",
         "final_val_loss",
+        "best_test_contact_rate",
+        "best_test_mean_min_eef_object_distance",
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -207,6 +255,8 @@ def load_or_build_summary(reports_root: Path, runs: list[dict]) -> list[dict]:
                     "best_test_mean_score",
                     "final_test_mean_score",
                     "final_val_loss",
+                    "best_test_contact_rate",
+                    "best_test_mean_min_eef_object_distance",
                 ):
                     value = parsed.get(key)
                     parsed[key] = None if value in (None, "", "-") else float(value)
@@ -217,10 +267,10 @@ def load_or_build_summary(reports_root: Path, runs: list[dict]) -> list[dict]:
 
     rows: list[dict] = []
     for run in runs:
-        summary = summarize_run(run["run_dir"], run["task"], run["seed"])
+        summary = summarize_run(run["run_dir"], run["task"], run["exp_name"], run["seed"])
         if summary is not None:
             rows.append(summary)
-    rows.sort(key=lambda row: (row["task"], row["seed"]))
+    rows.sort(key=lambda row: (row["task"], row["exp_name"], row["seed"]))
     save_summary_csv(rows, reports_root)
     return rows
 
@@ -246,6 +296,8 @@ def _metric_title(metric_name: str | None) -> str:
         return "Best Test Mean Score"
     if metric_name == "val_loss":
         return "Best Checkpoint Val Loss"
+    if metric_name == "test_mean_min_eef_object_distance":
+        return "Best Min EEF-Object Distance"
     return "Best Checkpoint Metric"
 
 
@@ -260,7 +312,9 @@ def plot_run_curves(run: dict, curves_dir: Path) -> list[Path]:
         return []
 
     task = run["task"]
+    exp_name = run["exp_name"]
     seed = run["seed"]
+    base_name = f"{task}_{exp_name}_seed{seed}"
     saved: list[Path] = []
 
     if any(any(key in row for key in ("train_loss", "val_loss")) for row in rows):
@@ -269,12 +323,12 @@ def plot_run_curves(run: dict, curves_dir: Path) -> list[Path]:
             xs, ys = _extract_series(rows, key)
             if len(xs) > 0:
                 ax.plot(xs, ys, label=label, linewidth=1.6)
-        ax.set_title(f"{task} seed {seed} loss curves")
+        ax.set_title(f"{task} {exp_name} seed {seed} loss curves")
         ax.set_xlabel("epoch / global_step")
         ax.set_ylabel("loss")
         ax.grid(alpha=0.3)
         ax.legend()
-        path = curves_dir / f"{task}_seed{seed}_loss_curve.png"
+        path = curves_dir / f"{base_name}_loss_curve.png"
         fig.tight_layout()
         fig.savefig(path, dpi=180)
         plt.close(fig)
@@ -285,29 +339,140 @@ def plot_run_curves(run: dict, curves_dir: Path) -> list[Path]:
         xs, ys = _extract_series(rows, "train_action_mse_error")
         if len(xs) > 0:
             ax.plot(xs, ys, color="#d95f02", linewidth=1.6)
-        ax.set_title(f"{task} seed {seed} train action MSE")
+        ax.set_title(f"{task} {exp_name} seed {seed} train action MSE")
         ax.set_xlabel("epoch / global_step")
         ax.set_ylabel("mse")
         ax.grid(alpha=0.3)
-        path = curves_dir / f"{task}_seed{seed}_action_mse_curve.png"
+        path = curves_dir / f"{base_name}_action_mse_curve.png"
         fig.tight_layout()
         fig.savefig(path, dpi=180)
         plt.close(fig)
         saved.append(path)
 
-    if any(any(key in row for key in ("train/mean_score", "test/mean_score")) for row in rows):
+    score_keys = ("train/mean_score", "test/mean_score", "test/contact_rate", "test/mean_min_eef_object_distance")
+    if any(any(key in row for key in score_keys) for row in rows):
         fig, ax = plt.subplots(figsize=(8, 4.5))
-        for key, label in (("train/mean_score", "Train Mean Score"), ("test/mean_score", "Test Mean Score")):
+        for key, label in (
+            ("train/mean_score", "Train Mean Score"),
+            ("test/mean_score", "Test Mean Score"),
+            ("test/contact_rate", "Test Contact Rate"),
+        ):
             xs, ys = _extract_series(rows, key)
             if len(xs) > 0:
                 ax.plot(xs, ys, label=label, linewidth=1.6)
-        ax.set_title(f"{task} seed {seed} score curves")
+        ax.set_title(f"{task} {exp_name} seed {seed} score curves")
         ax.set_xlabel("epoch / global_step")
-        ax.set_ylabel("mean score")
+        ax.set_ylabel("metric")
         ax.grid(alpha=0.3)
         ax.legend()
-        path = curves_dir / f"{task}_seed{seed}_score_curve.png"
+        path = curves_dir / f"{base_name}_score_curve.png"
         fig.tight_layout()
+        fig.savefig(path, dpi=180)
+        plt.close(fig)
+        saved.append(path)
+
+        xs, ys = _extract_series(rows, "test/mean_min_eef_object_distance")
+        if len(xs) > 0:
+            fig, ax = plt.subplots(figsize=(8, 4.5))
+            ax.plot(xs, ys, color="#2ca02c", linewidth=1.6)
+            ax.set_title(f"{task} {exp_name} seed {seed} min eef-object distance")
+            ax.set_xlabel("epoch / global_step")
+            ax.set_ylabel("distance")
+            ax.grid(alpha=0.3)
+            path = curves_dir / f"{base_name}_distance_curve.png"
+            fig.tight_layout()
+            fig.savefig(path, dpi=180)
+            plt.close(fig)
+            saved.append(path)
+
+    return saved
+
+
+def plot_single_run_curves_for_dir(run_dir: Path, task: str, seed: int, curves_dir: Path, exp_name: str = LEGACY_EXP_NAME) -> list[Path]:
+    curves_dir.mkdir(parents=True, exist_ok=True)
+    run = {
+        "task": task,
+        "exp_name": exp_name,
+        "seed": seed,
+        "run_dir": run_dir,
+        "log_path": run_dir / "logs.json.txt",
+        "media_dirs": [run_dir / "media", run_dir / "rollout_export" / "media", run_dir / "best_rollout_export" / "media"],
+    }
+    return plot_run_curves(run, curves_dir)
+
+
+def plot_task_aggregate(task_name: str, rows: list[dict], aggregates_dir: Path) -> list[Path]:
+    plt = load_matplotlib_pyplot()
+    saved: list[Path] = []
+    task_rows = [row for row in rows if row["task"] == task_name]
+    if not task_rows:
+        return saved
+
+    exp_names = sorted({row["exp_name"] for row in task_rows})
+    for exp_name in exp_names:
+        exp_rows = sorted(
+            [row for row in task_rows if row["exp_name"] == exp_name],
+            key=lambda row: int(row["seed"]),
+        )
+        if not exp_rows:
+            continue
+        seeds = [str(row["seed"]) for row in exp_rows]
+        best_metric_names = sorted(
+            {
+                row.get("best_checkpoint_metric_name")
+                for row in exp_rows
+                if row.get("best_checkpoint_metric_name") is not None and row.get("best_checkpoint_metric_value") is not None
+            }
+        )
+        plot_best_metric = len(best_metric_names) == 1
+        best_metric_name = best_metric_names[0] if plot_best_metric else None
+        best_metric_values = [row.get("best_checkpoint_metric_value") for row in exp_rows]
+        val_losses = [row["final_val_loss"] for row in exp_rows]
+
+        subplot_count = 2 if plot_best_metric else 1
+        fig, axes = plt.subplots(1, subplot_count, figsize=(10 if plot_best_metric else 5.6, 4.5))
+        if subplot_count == 1:
+            axes = [axes]
+
+        axis_offset = 0
+        if plot_best_metric:
+            best_values = [float(value) for value in best_metric_values if value is not None]
+            axes[0].bar(
+                seeds,
+                [0.0 if value is None else float(value) for value in best_metric_values],
+                color="#1f77b4",
+                alpha=0.85,
+            )
+            if best_values:
+                best_mean = mean(best_values)
+                best_std = population_std(best_values)
+                axes[0].axhline(best_mean, color="#d62728", linestyle="--", linewidth=1.4, label=f"mean={best_mean:.3f}")
+                if len(best_values) > 1:
+                    axes[0].axhspan(best_mean - best_std, best_mean + best_std, color="#d62728", alpha=0.12, label=f"std={best_std:.3f}")
+                axes[0].legend()
+            axes[0].set_title(_metric_title(best_metric_name))
+            axes[0].set_xlabel("seed")
+            axes[0].set_ylabel("score" if best_metric_name == "test_mean_score" else "loss")
+            axes[0].grid(axis="y", alpha=0.3)
+            axis_offset = 1
+
+        val_values = [float(value) for value in val_losses if value is not None]
+        axes[axis_offset].bar(seeds, [0.0 if value is None else float(value) for value in val_losses], color="#2ca02c", alpha=0.85)
+        if val_values:
+            val_mean = mean(val_values)
+            val_std = population_std(val_values)
+            axes[axis_offset].axhline(val_mean, color="#9467bd", linestyle="--", linewidth=1.4, label=f"mean={val_mean:.3f}")
+            if len(val_values) > 1:
+                axes[axis_offset].axhspan(val_mean - val_std, val_mean + val_std, color="#9467bd", alpha=0.12, label=f"std={val_std:.3f}")
+            axes[axis_offset].legend()
+        axes[axis_offset].set_title("Final Val Loss")
+        axes[axis_offset].set_xlabel("seed")
+        axes[axis_offset].set_ylabel("loss")
+        axes[axis_offset].grid(axis="y", alpha=0.3)
+
+        fig.suptitle(f"{task_name} {exp_name} multi-seed summary")
+        fig.tight_layout()
+        path = aggregates_dir / f"{task_name}_{exp_name}_multiseed_summary.png"
         fig.savefig(path, dpi=180)
         plt.close(fig)
         saved.append(path)
@@ -315,149 +480,66 @@ def plot_run_curves(run: dict, curves_dir: Path) -> list[Path]:
     return saved
 
 
-def plot_single_run_curves_for_dir(run_dir: Path, task: str, seed: int, curves_dir: Path) -> list[Path]:
-    curves_dir.mkdir(parents=True, exist_ok=True)
-    run = {
-        "task": task,
-        "seed": seed,
-        "run_dir": run_dir,
-        "log_path": run_dir / "logs.json.txt",
-        "media_dirs": [run_dir / "media", run_dir / "rollout_export" / "media"],
-    }
-    return plot_run_curves(run, curves_dir)
-
-
-def plot_task_aggregate(task_name: str, rows: list[dict], aggregates_dir: Path) -> Path | None:
-    plt = load_matplotlib_pyplot()
-    task_rows = [row for row in rows if row["task"] == task_name]
-    if not task_rows:
-        return None
-
-    task_rows = sorted(task_rows, key=lambda row: int(row["seed"]))
-    seeds = [str(row["seed"]) for row in task_rows]
-    best_metric_names = sorted(
-        {
-            row.get("best_checkpoint_metric_name")
-            for row in task_rows
-            if row.get("best_checkpoint_metric_name") is not None and row.get("best_checkpoint_metric_value") is not None
-        }
-    )
-    plot_best_metric = len(best_metric_names) == 1
-    best_metric_name = best_metric_names[0] if plot_best_metric else None
-    best_metric_values = [row.get("best_checkpoint_metric_value") for row in task_rows]
-    scores = [row["best_test_mean_score"] for row in task_rows]
-    val_losses = [row["final_val_loss"] for row in task_rows]
-
-    subplot_count = 2 if plot_best_metric else 1
-    fig, axes = plt.subplots(1, subplot_count, figsize=(10 if plot_best_metric else 5.6, 4.5))
-    if subplot_count == 1:
-        axes = [axes]
-
-    axis_offset = 0
-    if plot_best_metric:
-        best_values = [float(value) for value in best_metric_values if value is not None]
-        axes[0].bar(
-            seeds,
-            [0.0 if value is None else float(value) for value in best_metric_values],
-            color="#1f77b4",
-            alpha=0.85,
-        )
-        if best_values:
-            best_mean = mean(best_values)
-            best_std = population_std(best_values)
-            axes[0].axhline(best_mean, color="#d62728", linestyle="--", linewidth=1.4, label=f"mean={best_mean:.3f}")
-            if len(best_values) > 1:
-                axes[0].axhspan(best_mean - best_std, best_mean + best_std, color="#d62728", alpha=0.12, label=f"std={best_std:.3f}")
-            axes[0].legend()
-        axes[0].set_title(_metric_title(best_metric_name))
-        axes[0].set_xlabel("seed")
-        axes[0].set_ylabel("score" if best_metric_name == "test_mean_score" else "loss")
-        axes[0].grid(axis="y", alpha=0.3)
-        axis_offset = 1
-
-    val_values = [float(value) for value in val_losses if value is not None]
-    axes[axis_offset].bar(seeds, [0.0 if value is None else float(value) for value in val_losses], color="#2ca02c", alpha=0.85)
-    if val_values:
-        val_mean = mean(val_values)
-        val_std = population_std(val_values)
-        axes[axis_offset].axhline(val_mean, color="#9467bd", linestyle="--", linewidth=1.4, label=f"mean={val_mean:.3f}")
-        if len(val_values) > 1:
-            axes[axis_offset].axhspan(val_mean - val_std, val_mean + val_std, color="#9467bd", alpha=0.12, label=f"std={val_std:.3f}")
-        axes[axis_offset].legend()
-    axes[axis_offset].set_title("Final Val Loss")
-    axes[axis_offset].set_xlabel("seed")
-    axes[axis_offset].set_ylabel("loss")
-    axes[axis_offset].grid(axis="y", alpha=0.3)
-
-    fig.suptitle(f"{task_name} multi-seed summary")
-    fig.tight_layout()
-    path = aggregates_dir / f"{task_name}_multiseed_summary.png"
-    fig.savefig(path, dpi=180)
-    plt.close(fig)
-    return path
-
-
 def plot_cross_task_bars(rows: list[dict], aggregates_dir: Path) -> list[Path]:
     plt = load_matplotlib_pyplot()
-    grouped = {}
-    for task in [task_config_name(task) for task in MIMICGEN_TASKS]:
-        grouped[task] = [row for row in rows if row["task"] == task]
-
-    tasks = [task for task, task_rows in grouped.items() if task_rows]
-    if not tasks:
-        return []
-
-    metric_names = {
-        row.get("best_checkpoint_metric_name")
-        for row in rows
-        if row.get("best_checkpoint_metric_name") is not None and row.get("best_checkpoint_metric_value") is not None
-    }
-    plot_best_metric = len(metric_names) == 1
-    best_metric_name = next(iter(metric_names)) if plot_best_metric else None
-    best_metric_means = []
-    best_metric_stds = []
-    val_means = []
-    val_stds = []
-    for task in tasks:
-        metric_values = [
-            float(row["best_checkpoint_metric_value"])
-            for row in grouped[task]
-            if row.get("best_checkpoint_metric_name") == best_metric_name
-            and row.get("best_checkpoint_metric_value") is not None
-        ]
-        val_values = [float(row["final_val_loss"]) for row in grouped[task] if row["final_val_loss"] is not None]
-        best_metric_means.append(mean(metric_values) if metric_values else 0.0)
-        best_metric_stds.append(population_std(metric_values) if len(metric_values) > 1 else 0.0)
-        val_means.append(mean(val_values) if val_values else 0.0)
-        val_stds.append(population_std(val_values) if len(val_values) > 1 else 0.0)
-
-    x = np.arange(len(tasks))
+    exp_names = sorted({row["exp_name"] for row in rows})
     saved: list[Path] = []
+    for exp_name in exp_names:
+        filtered_rows = [row for row in rows if row["exp_name"] == exp_name]
+        grouped = {task_config_name(task): [row for row in filtered_rows if row["task"] == task_config_name(task)] for task in MIMICGEN_TASKS}
+        tasks = [task for task, task_rows in grouped.items() if task_rows]
+        if not tasks:
+            continue
 
-    if plot_best_metric:
+        metric_names = {
+            row.get("best_checkpoint_metric_name")
+            for row in filtered_rows
+            if row.get("best_checkpoint_metric_name") is not None and row.get("best_checkpoint_metric_value") is not None
+        }
+        plot_best_metric = len(metric_names) == 1
+        best_metric_name = next(iter(metric_names)) if plot_best_metric else None
+        best_metric_means = []
+        best_metric_stds = []
+        val_means = []
+        val_stds = []
+        for task in tasks:
+            metric_values = [
+                float(row["best_checkpoint_metric_value"])
+                for row in grouped[task]
+                if row.get("best_checkpoint_metric_name") == best_metric_name
+                and row.get("best_checkpoint_metric_value") is not None
+            ]
+            val_values = [float(row["final_val_loss"]) for row in grouped[task] if row["final_val_loss"] is not None]
+            best_metric_means.append(mean(metric_values) if metric_values else 0.0)
+            best_metric_stds.append(population_std(metric_values) if len(metric_values) > 1 else 0.0)
+            val_means.append(mean(val_values) if val_values else 0.0)
+            val_stds.append(population_std(val_values) if len(val_values) > 1 else 0.0)
+
+        x = np.arange(len(tasks))
+        if plot_best_metric:
+            fig, ax = plt.subplots(figsize=(8.5, 4.8))
+            ax.bar(x, best_metric_means, yerr=best_metric_stds, capsize=4, color="#4c78a8", alpha=0.9)
+            ax.set_xticks(x, tasks, rotation=12, ha="right")
+            ax.set_ylabel("best checkpoint score" if best_metric_name == "test_mean_score" else "best checkpoint loss")
+            ax.set_title(f"{exp_name}: D1 {_metric_title(best_metric_name).lower()} by task")
+            ax.grid(axis="y", alpha=0.3)
+            fig.tight_layout()
+            metric_path = aggregates_dir / f"{exp_name}_all_tasks_best_checkpoint_metric_bar.png"
+            fig.savefig(metric_path, dpi=180)
+            plt.close(fig)
+            saved.append(metric_path)
+
         fig, ax = plt.subplots(figsize=(8.5, 4.8))
-        ax.bar(x, best_metric_means, yerr=best_metric_stds, capsize=4, color="#4c78a8", alpha=0.9)
+        ax.bar(x, val_means, yerr=val_stds, capsize=4, color="#59a14f", alpha=0.9)
         ax.set_xticks(x, tasks, rotation=12, ha="right")
-        ax.set_ylabel("best checkpoint score" if best_metric_name == "test_mean_score" else "best checkpoint loss")
-        ax.set_title(f"D1 {_metric_title(best_metric_name).lower()} by task")
+        ax.set_ylabel("final val_loss")
+        ax.set_title(f"{exp_name}: D1 final val loss by task")
         ax.grid(axis="y", alpha=0.3)
         fig.tight_layout()
-        metric_path = aggregates_dir / "all_tasks_best_checkpoint_metric_bar.png"
-        fig.savefig(metric_path, dpi=180)
+        val_path = aggregates_dir / f"{exp_name}_all_tasks_final_val_loss_bar.png"
+        fig.savefig(val_path, dpi=180)
         plt.close(fig)
-        saved.append(metric_path)
-
-    fig, ax = plt.subplots(figsize=(8.5, 4.8))
-    ax.bar(x, val_means, yerr=val_stds, capsize=4, color="#59a14f", alpha=0.9)
-    ax.set_xticks(x, tasks, rotation=12, ha="right")
-    ax.set_ylabel("final val_loss")
-    ax.set_title("D1 final val loss by task")
-    ax.grid(axis="y", alpha=0.3)
-    fig.tight_layout()
-    val_path = aggregates_dir / "all_tasks_final_val_loss_bar.png"
-    fig.savefig(val_path, dpi=180)
-    plt.close(fig)
-    saved.append(val_path)
+        saved.append(val_path)
 
     return saved
 
@@ -478,14 +560,7 @@ def select_fixed4_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
         return []
     if len(frames) == 1:
         return [frames[0]] * 4
-    indices = sorted(
-        {
-            0,
-            max(0, len(frames) // 3),
-            max(0, (2 * len(frames)) // 3),
-            len(frames) - 1,
-        }
-    )
+    indices = sorted({0, max(0, len(frames) // 3), max(0, (2 * len(frames)) // 3), len(frames) - 1})
     selected = [frames[index] for index in indices]
     while len(selected) < 4:
         selected.append(selected[-1])
@@ -519,17 +594,19 @@ def plot_contact_sheets(run: dict, contact_dir: Path, max_videos: int, frame_lay
         return []
 
     task = run["task"]
+    exp_name = run["exp_name"]
     seed = run["seed"]
+    base_name = f"{task}_{exp_name}_seed{seed}"
     saved: list[Path] = []
     for index, video_path in enumerate(videos[: max(1, max_videos)]):
         frames = read_video_frames(video_path)
         selected = select_fixed4_frames(frames) if frame_layout == "fixed4" else select_fixed4_frames(frames)
         suffix = "" if index == 0 else f"_{index + 1:02d}"
-        output_path = contact_dir / f"{task}_seed{seed}_rollout_contact_sheet{suffix}.png"
+        output_path = contact_dir / f"{base_name}_rollout_contact_sheet{suffix}.png"
         result = build_contact_sheet(
             selected_frames=selected,
             output_path=output_path,
-            title=f"{task} seed {seed} rollout{suffix or ' #1'}",
+            title=f"{task} {exp_name} seed {seed} rollout{suffix or ' #1'}",
         )
         if result is not None:
             saved.append(result)
@@ -557,9 +634,7 @@ def main() -> None:
         generated.extend(plot_contact_sheets(run, dirs["contact_sheets"], max_videos=args.max_videos, frame_layout=args.frame_layout))
 
     for task in tasks:
-        path = plot_task_aggregate(task, summary_rows, dirs["aggregates"])
-        if path is not None:
-            generated.append(path)
+        generated.extend(plot_task_aggregate(task, summary_rows, dirs["aggregates"]))
     generated.extend(plot_cross_task_bars(summary_rows, dirs["aggregates"]))
 
     print(f"Wrote {len(generated)} figure(s) under {dirs['root']}")

@@ -1,0 +1,43 @@
+defaults:
+  - train_diffusion_transformer_mimicgen_d1_lowdim_abs_workspace
+  - _self_
+  - task: mug_cleanup_d1_lowdim_abs
+
+name: train_diffusion_transformer_mimicgen_d1_mug_cleanup_loc_tuned
+exp_name: "mug_loc_tuned_e200"
+
+horizon: 24
+n_obs_steps: 4
+n_action_steps: 2
+
+dataloader:
+  batch_size: 512
+  num_workers: 4
+  shuffle: True
+  pin_memory: True
+  persistent_workers: True
+
+val_dataloader:
+  batch_size: 512
+  num_workers: 4
+  shuffle: False
+  pin_memory: True
+  persistent_workers: True
+
+training:
+  resume: False
+  enable_rollout: False
+  num_epochs: 200
+  rollout_every: 20
+  checkpoint_every: 20
+
+checkpoint:
+  topk:
+    monitor_key: val_loss
+    mode: min
+    k: 5
+    format_str: 'epoch={epoch:04d}-val_loss={val_loss:.6f}.ckpt'
+
+multi_run:
+  run_dir: ${oc.env:MYDIFFUSION_D1_OUTPUTS_DIR,mydiffusion_D1/outputs}/${task.name}/${exp_name}/${training.seed}
+  wandb_name_base: ${task_name}_${exp_name}_seed${training.seed}

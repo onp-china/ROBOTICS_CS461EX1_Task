@@ -15,12 +15,19 @@ from _runtime import MIMICGEN_TASKS, MYDIFFUSION_D1_ROOT, add_repo_paths, fail, 
 
 
 TASK_CHOICES = tuple(task_config_name(task_name) for task_name in MIMICGEN_TASKS)
+BASELINE_PROFILE = "baseline"
+MUG_LOC_TUNED_PROFILE = "mug_cleanup_loc_tuned"
+PROFILE_CHOICES = (BASELINE_PROFILE, MUG_LOC_TUNED_PROFILE)
+BASELINE_CONFIG_NAME = "train_diffusion_transformer_mimicgen_d1_lowdim_abs_workspace"
+MUG_LOC_TUNED_CONFIG_NAME = "train_diffusion_transformer_mimicgen_d1_mug_cleanup_loc_tuned_workspace"
+MUG_LOC_TUNED_TASK = "mug_cleanup_d1_lowdim_abs"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run one MimicGen D1 baseline training job.")
     parser.add_argument("--task", required=True, choices=TASK_CHOICES)
     parser.add_argument("--seed", required=True, type=int)
+    parser.add_argument("--profile", choices=PROFILE_CHOICES, default=BASELINE_PROFILE)
     parser.add_argument("--exp-name", default=None)
     parser.add_argument(
         "--device",
@@ -37,10 +44,19 @@ def main() -> None:
     if not train_script.is_file():
         fail(f"Training entrypoint is missing: {train_script}")
 
+    config_name = BASELINE_CONFIG_NAME
+    if args.profile == MUG_LOC_TUNED_PROFILE:
+        if args.task != MUG_LOC_TUNED_TASK:
+            fail(
+                "The `mug_cleanup_loc_tuned` profile only supports "
+                f"`{MUG_LOC_TUNED_TASK}`. Received `{args.task}`."
+            )
+        config_name = MUG_LOC_TUNED_CONFIG_NAME
+
     command = [
         sys.executable,
         str(train_script),
-        "--config-name=train_diffusion_transformer_mimicgen_d1_lowdim_abs_workspace",
+        f"--config-name={config_name}",
         f"task={args.task}",
         f"training.seed={args.seed}",
     ]
@@ -49,7 +65,7 @@ def main() -> None:
     if args.device:
         command.append(f"training.device={args.device}")
 
-    print(f"Launching baseline run:\n{format_command(command)}")
+    print(f"Launching {args.profile} run:\n{format_command(command)}")
     subprocess.run(command, check=True, cwd=MYDIFFUSION_D1_ROOT.parent)
 
 
