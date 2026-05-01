@@ -2,6 +2,18 @@ import gym
 import numpy as np
 from diffusion_policy.real_world.video_recorder import VideoRecorder
 
+
+def _coerce_frame_uint8(frame):
+    frame = np.asarray(frame)
+    if frame.dtype == np.uint8:
+        return frame
+    if np.issubdtype(frame.dtype, np.floating):
+        max_value = float(np.max(frame)) if frame.size > 0 else 0.0
+        if max_value <= 1.0:
+            frame = frame * 255.0
+    return np.clip(frame, 0, 255).astype(np.uint8)
+
+
 class VideoRecordingWrapper(gym.Wrapper):
     def __init__(self, 
             env, 
@@ -41,8 +53,7 @@ class VideoRecordingWrapper(gym.Wrapper):
 
             frame = self.env.render(
                 mode=self.mode, **self.render_kwargs)
-            assert frame.dtype == np.uint8
-            self.video_recoder.write_frame(frame)
+            self.video_recoder.write_frame(_coerce_frame_uint8(frame))
         return result
     
     def render(self, mode='rgb_array', **kwargs):
