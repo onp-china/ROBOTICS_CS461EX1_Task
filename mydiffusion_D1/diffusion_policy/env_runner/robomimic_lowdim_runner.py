@@ -24,6 +24,44 @@ import robomimic.utils.env_utils as EnvUtils
 import robomimic.utils.obs_utils as ObsUtils
 
 
+class _SingleEnvVectorAdapter:
+    def __init__(self, env_fn):
+        self.env = env_fn()
+
+    def reset(self):
+        obs = self.env.reset()
+        return np.expand_dims(obs, axis=0)
+
+    def step(self, actions):
+        action = np.asarray(actions)[0]
+        obs, reward, done, info = self.env.step(action)
+        return (
+            np.expand_dims(obs, axis=0),
+            np.asarray([reward]),
+            np.asarray([done], dtype=np.bool_),
+            [info],
+        )
+
+    def call_each(self, name, args_list=None):
+        args_list = args_list or [tuple()]
+        results = []
+        for args in args_list:
+            method = getattr(self.env, name)
+            results.append(method(*args))
+        return results
+
+    def call(self, name, *args, **kwargs):
+        method = getattr(self.env, name)
+        return [method(*args, **kwargs)]
+
+    def render(self, *args, **kwargs):
+        return np.asarray([self.env.render(*args, **kwargs)], dtype=object)
+
+    def close(self):
+        if hasattr(self.env, "close"):
+            self.env.close()
+
+
 def create_env(env_meta, obs_keys):
     ObsUtils.initialize_obs_modality_mapping_from_dict(
         {'low_dim': obs_keys})
@@ -203,7 +241,10 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
             env_prefixs.append('test/')
             env_init_fn_dills.append(dill.dumps(init_fn))
         
-        env = AsyncVectorEnv(env_fns, shared_memory=False)
+        if n_envs == 1:
+            env = _SingleEnvVectorAdapter(env_fns[0])
+        else:
+            env = AsyncVectorEnv(env_fns, shared_memory=False)
         # env = SyncVectorEnv(env_fns)
 
         self.env_meta = env_meta
