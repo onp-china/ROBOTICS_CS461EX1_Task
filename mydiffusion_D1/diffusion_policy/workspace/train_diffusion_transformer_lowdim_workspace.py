@@ -415,6 +415,22 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                         f"train_action_mse_error={step_log['train_action_mse_error']:.6f} "
                         if 'train_action_mse_error' in step_log else ""
                     )
+                    + (
+                        f"test_mean_score={step_log['test/mean_score']:.6f} "
+                        if 'test/mean_score' in step_log else ""
+                    )
+                    + (
+                        f"test_contact_rate={step_log['test/contact_rate']:.6f} "
+                        if 'test/contact_rate' in step_log else ""
+                    )
+                    + (
+                        f"test_mean_min_eef_object_distance={step_log['test/mean_min_eef_object_distance']:.6f} "
+                        if 'test/mean_min_eef_object_distance' in step_log else ""
+                    )
+                    + (
+                        f"test_mean_object_displacement={step_log['test/mean_object_displacement']:.6f} "
+                        if 'test/mean_object_displacement' in step_log else ""
+                    )
                     + f"lr={step_log['lr']:.6e}"
                 )
                 self.global_step += 1
