@@ -54,18 +54,29 @@ def _extract_first_mean_score(log_data: dict) -> float | None:
     return None
 
 
-def main() -> None:
+def export_rollout_video_for_checkpoint(
+    task: str,
+    checkpoint: str | Path,
+    output_dir: str | Path | None = None,
+    output_video: str | Path | None = None,
+    seed: int = 100000,
+    n_test: int = 1,
+    n_envs: int = 1,
+    device: str = "cpu",
+) -> dict:
     add_repo_paths()
-    args = parse_args()
     require_modules(("hydra", "wandb", "robomimic", "torch", "h5py", "dill", "av", "diffusers", "einops", "scipy", "gym"))
     register_mimicgen_environments()
 
-    checkpoint_path = Path(args.checkpoint).expanduser().resolve()
+    checkpoint_path = Path(checkpoint).expanduser().resolve()
     if not checkpoint_path.is_file():
         fail(f"Checkpoint path does not exist: {checkpoint_path}")
 
-    output_dir = _resolve_output_dir(checkpoint_path, args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    resolved_output_dir = _resolve_output_dir(
+        checkpoint_path=checkpoint_path,
+        explicit_output_dir=str(output_dir) if output_dir is not None else None,
+    )
+    resolved_output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         import hydra
@@ -83,28 +94,28 @@ def main() -> None:
     cfg = copy.deepcopy(workspace.cfg)
 
     task_name = str(getattr(cfg.task, "name", ""))
-    if task_name and task_name != args.task:
+    if task_name and task_name != task:
         fail(
-            f"Checkpoint task `{task_name}` does not match requested task `{args.task}`. "
+            f"Checkpoint task `{task_name}` does not match requested task `{task}`. "
             "Pass a checkpoint from the same task run."
         )
 
-    device = torch.device(args.device)
+    torch_device = torch.device(device)
     policy = workspace.ema_model if getattr(cfg.training, "use_ema", False) and workspace.ema_model is not None else workspace.model
-    policy.to(device)
+    policy.to(torch_device)
     policy.eval()
 
     runner_cfg = copy.deepcopy(cfg.task.env_runner)
     runner_cfg.n_train = 0
     runner_cfg.n_train_vis = 0
-    runner_cfg.n_test = int(args.n_test)
-    runner_cfg.n_test_vis = min(int(args.n_test), 1)
-    runner_cfg.test_start_seed = int(args.seed)
-    runner_cfg.n_envs = int(args.n_envs)
+    runner_cfg.n_test = int(n_test)
+    runner_cfg.n_test_vis = min(int(n_test), 1)
+    runner_cfg.test_start_seed = int(seed)
+    runner_cfg.n_envs = int(n_envs)
 
-    media_dir = output_dir / "media"
+    media_dir = resolved_output_dir / "media"
     before_media = _collect_media_paths(media_dir)
-    runner = hydra.utils.instantiate(runner_cfg, output_dir=str(output_dir))
+    runner = hydra.utils.instantiate(runner_cfg, output_dir=str(resolved_output_dir))
     log_data = runner.run(policy)
     after_media = _collect_media_paths(media_dir)
     new_media = sorted(after_media - before_media)
@@ -112,19 +123,33 @@ def main() -> None:
     exported_video = None
     if new_media:
         exported_video = new_media[0]
-        if args.output_video:
-            target = Path(args.output_video).expanduser().resolve()
+        if output_video:
+            target = Path(output_video).expanduser().resolve()
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(exported_video, target)
             exported_video = target
 
-    summary = {
-        "task": args.task,
+    return {
+        "task": task,
         "checkpoint": str(checkpoint_path),
-        "run_dir": str(output_dir),
+        "run_dir": str(resolved_output_dir),
         "mean_score": _extract_first_mean_score(log_data),
         "video_path": str(exported_video) if exported_video is not None else None,
     }
+
+
+def main() -> None:
+    args = parse_args()
+    summary = export_rollout_video_for_checkpoint(
+        task=args.task,
+        checkpoint=args.checkpoint,
+        output_dir=args.output_dir,
+        output_video=args.output_video,
+        seed=args.seed,
+        n_test=args.n_test,
+        n_envs=args.n_envs,
+        device=args.device,
+    )
     print(json.dumps(summary, indent=2))
 
 

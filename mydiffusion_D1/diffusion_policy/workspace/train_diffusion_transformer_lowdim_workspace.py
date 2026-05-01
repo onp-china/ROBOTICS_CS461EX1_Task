@@ -12,11 +12,11 @@ import hydra
 import torch
 from omegaconf import OmegaConf
 import pathlib
+import sys
 from torch.utils.data import DataLoader
 import copy
 import random
 import wandb
-import tqdm
 import numpy as np
 import shutil
 
@@ -29,6 +29,13 @@ from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
 from diffusion_policy.common.json_logger import JsonLogger
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
 from diffusers.training_utils import EMAModel
+
+MYDIFFUSION_D1_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(MYDIFFUSION_D1_ROOT) not in sys.path:
+    sys.path.insert(0, str(MYDIFFUSION_D1_ROOT))
+
+from scripts.export_rollout_video import export_rollout_video_for_checkpoint
+from scripts.plot_results import plot_single_run_curves_for_dir
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
@@ -58,6 +65,88 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
 
         self.global_step = 0
         self.epoch = 0
+
+    def _resolve_best_checkpoint_path(self) -> pathlib.Path | None:
+        checkpoint_dir = pathlib.Path(self.output_dir) / "checkpoints"
+        if not checkpoint_dir.is_dir():
+            return None
+
+        monitor_key = str(self.cfg.checkpoint.topk.monitor_key)
+        mode = str(self.cfg.checkpoint.topk.mode)
+        candidates = []
+        for ckpt_path in checkpoint_dir.glob("*.ckpt"):
+            if ckpt_path.name == "latest.ckpt":
+                continue
+            stem = ckpt_path.stem
+            marker = f"{monitor_key}="
+            if marker not in stem:
+                continue
+            try:
+                raw_value = stem.split(marker, 1)[1].split("-", 1)[0]
+                metric_value = float(raw_value)
+            except ValueError:
+                continue
+            candidates.append((metric_value, ckpt_path))
+
+        if not candidates:
+            latest_path = checkpoint_dir / "latest.ckpt"
+            return latest_path if latest_path.is_file() else None
+
+        if mode == "max":
+            return max(candidates, key=lambda item: item[0])[1]
+        return min(candidates, key=lambda item: item[0])[1]
+
+    def _maybe_export_best_rollout_video(self) -> None:
+        if not bool(getattr(self.cfg.training, "auto_export_best_rollout_video", False)):
+            return
+
+        best_checkpoint = self._resolve_best_checkpoint_path()
+        if best_checkpoint is None:
+            print("Skipping best-checkpoint rollout export: no checkpoint found.")
+            return
+
+        output_dir = pathlib.Path(self.output_dir) / "best_rollout_export"
+        output_video = pathlib.Path(self.output_dir) / "best_epoch_rollout.mp4"
+        try:
+            summary = export_rollout_video_for_checkpoint(
+                task=str(self.cfg.task.name),
+                checkpoint=best_checkpoint,
+                output_dir=output_dir,
+                output_video=output_video,
+                seed=int(getattr(self.cfg.training, "best_rollout_seed", 100000)),
+                n_test=int(getattr(self.cfg.training, "best_rollout_n_test", 1)),
+                n_envs=int(getattr(self.cfg.training, "best_rollout_n_envs", 1)),
+                device=str(self.cfg.training.device),
+            )
+            print(
+                "Best-checkpoint rollout video exported: "
+                f"checkpoint={best_checkpoint} video={summary.get('video_path')} score={summary.get('mean_score')}"
+            )
+        except Exception as exc:
+            print(
+                "Best-checkpoint rollout export failed: "
+                f"checkpoint={best_checkpoint} error={exc}"
+            )
+
+    def _maybe_export_training_curves(self) -> None:
+        if not bool(getattr(self.cfg.training, "auto_export_training_curves", False)):
+            return
+
+        run_dir = pathlib.Path(self.output_dir)
+        curves_dir = run_dir / "curves"
+        try:
+            saved = plot_single_run_curves_for_dir(
+                run_dir=run_dir,
+                task=str(self.cfg.task.name),
+                seed=int(self.cfg.training.seed),
+                curves_dir=curves_dir,
+            )
+            if saved:
+                print("Training curves exported: " + ", ".join(str(path) for path in saved))
+            else:
+                print("Skipping training curve export: no plottable metrics found.")
+        except Exception as exc:
+            print(f"Training curve export failed: {exc}")
 
     def run(self):
         cfg = copy.deepcopy(self.cfg)
@@ -144,6 +233,9 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
 
         # training loop
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
+        if (not cfg.training.resume) and os.path.isfile(log_path):
+            # Start a fresh json log for non-resumed runs instead of appending history.
+            os.remove(log_path)
         with JsonLogger(log_path) as json_logger:
             for local_epoch_idx in range(cfg.training.num_epochs):
                 step_log = dict()
@@ -288,6 +380,8 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                 )
                 self.global_step += 1
                 self.epoch += 1
+        self._maybe_export_training_curves()
+        self._maybe_export_best_rollout_video()
 
 @hydra.main(
     version_base=None,

@@ -315,6 +315,18 @@ def plot_run_curves(run: dict, curves_dir: Path) -> list[Path]:
     return saved
 
 
+def plot_single_run_curves_for_dir(run_dir: Path, task: str, seed: int, curves_dir: Path) -> list[Path]:
+    curves_dir.mkdir(parents=True, exist_ok=True)
+    run = {
+        "task": task,
+        "seed": seed,
+        "run_dir": run_dir,
+        "log_path": run_dir / "logs.json.txt",
+        "media_dirs": [run_dir / "media", run_dir / "rollout_export" / "media"],
+    }
+    return plot_run_curves(run, curves_dir)
+
+
 def plot_task_aggregate(task_name: str, rows: list[dict], aggregates_dir: Path) -> Path | None:
     plt = load_matplotlib_pyplot()
     task_rows = [row for row in rows if row["task"] == task_name]

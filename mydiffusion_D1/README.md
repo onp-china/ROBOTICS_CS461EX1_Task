@@ -84,6 +84,25 @@ python mydiffusion_D1/scripts/inspect_mimicgen_dataset.py
 python mydiffusion_D1/scripts/convert_mimicgen_abs_actions.py
 ```
 
+如果 `coffee_d1` 或 `three_piece_assembly_d1` 在 absolute-action 转换时失败，推荐固定按下面顺序排查：
+
+```bash
+python mydiffusion_D1/scripts/inspect_mimicgen_dataset.py
+python mydiffusion_D1/scripts/convert_mimicgen_abs_actions.py --task coffee_d1 --diagnose --demo-idx 0
+python mydiffusion_D1/scripts/convert_mimicgen_abs_actions.py --task three_piece_assembly_d1 --diagnose --demo-idx 0
+python mydiffusion_D1/scripts/convert_mimicgen_abs_actions.py --task coffee_d1 --diagnose --max-demos 10
+python mydiffusion_D1/scripts/convert_mimicgen_abs_actions.py --task three_piece_assembly_d1 --diagnose --max-demos 10
+```
+
+诊断输出会把失败区分为三类：
+
+- 任务未注册或环境构造失败
+- absolute-controller 环境构造失败
+- demo replay、`robot.control`、`controller.goal_*` 读取失败
+
+`--diagnose` 不会写任何 processed HDF5。
+如果不带 `--diagnose` 且传了 `--demo-idx` 或 `--max-demos`，脚本会生成局部调试产物，不会覆盖正式的 `processed/<task>/low_dim_abs.hdf5`。
+
 ## 训练
 
 单任务训练：
@@ -96,7 +115,20 @@ python mydiffusion_D1/train.py \
   training.device=mps
 ```
 
-默认训练不会在训练过程中自动创建 rollout 环境，也不会自动导出 MP4。闭环 rollout 与视频导出改为单独脚本：
+默认训练不会在训练过程中自动创建 rollout 环境，但当前配置会在训练结束后自动挑选 `val_loss` 最优的 checkpoint，并额外导出一条 rollout 视频到：
+
+- `mydiffusion_D1/outputs/<task_config>/<seed>/best_epoch_rollout.mp4`
+- `mydiffusion_D1/outputs/<task_config>/<seed>/curves/<task_config>_seed<seed>_loss_curve.png`
+- `mydiffusion_D1/outputs/<task_config>/<seed>/curves/<task_config>_seed<seed>_action_mse_curve.png`
+
+如果你想关闭这一步，可在训练命令里覆盖：
+
+```bash
+training.auto_export_best_rollout_video=False
+training.auto_export_training_curves=False
+```
+
+手动闭环 rollout 与视频导出仍然可以单独运行：
 
 ```bash
 python mydiffusion_D1/scripts/export_rollout_video.py \

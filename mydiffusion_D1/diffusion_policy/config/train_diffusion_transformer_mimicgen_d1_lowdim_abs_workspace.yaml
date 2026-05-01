@@ -92,6 +92,11 @@ training:
   seed: 42
   debug: False
   resume: True
+  auto_export_best_rollout_video: True
+  auto_export_training_curves: True
+  best_rollout_seed: 100000
+  best_rollout_n_test: 1
+  best_rollout_n_envs: 1
   enable_rollout: False
   lr_scheduler: cosine
   lr_warmup_steps: 1000
