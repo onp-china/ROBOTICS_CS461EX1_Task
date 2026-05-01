@@ -186,7 +186,7 @@ class AsyncVectorEnv(VectorEnv):
         _, successes = zip(*[pipe.recv() for pipe in self.parent_pipes])
         self._raise_if_errors(successes)
 
-    def reset_async(self):
+    def reset_async(self, seed=None, options=None):
         self._assert_is_running()
         if self._state != AsyncState.DEFAULT:
             raise AlreadyPendingCallError(
@@ -194,6 +194,13 @@ class AsyncVectorEnv(VectorEnv):
                 "for a pending call to `{0}` to complete".format(self._state.value),
                 self._state.value,
             )
+
+        # Newer Gym versions call reset_async(seed=..., options=...).
+        # This backported vector env doesn't use reset options, but we
+        # can safely honor the seed contract before issuing reset.
+        del options
+        if seed is not None:
+            self.seed(seed)
 
         for pipe in self.parent_pipes:
             pipe.send(("reset", None))
