@@ -61,6 +61,7 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
 
     def run(self):
         cfg = copy.deepcopy(self.cfg)
+        env_runner = None
 
         # resume training
         if cfg.training.resume:
@@ -103,13 +104,6 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
             ema = hydra.utils.instantiate(
                 cfg.ema,
                 model=self.ema_model)
-
-        # configure env runner
-        env_runner: BaseLowdimRunner
-        env_runner = hydra.utils.instantiate(
-            cfg.task.env_runner,
-            output_dir=self.output_dir)
-        assert isinstance(env_runner, BaseLowdimRunner)
 
         # configure logging
         wandb_run = wandb.init(
@@ -212,7 +206,14 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                 policy.eval()
 
                 # run rollout
-                if (self.epoch % cfg.training.rollout_every) == 0:
+                if bool(getattr(cfg.training, "enable_rollout", False)) and cfg.training.rollout_every > 0 and (
+                    self.epoch % cfg.training.rollout_every
+                ) == 0:
+                    if env_runner is None:
+                        env_runner = hydra.utils.instantiate(
+                            cfg.task.env_runner,
+                            output_dir=self.output_dir)
+                        assert isinstance(env_runner, BaseLowdimRunner)
                     runner_log = env_runner.run(policy)
                     # log all
                     step_log.update(runner_log)

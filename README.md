@@ -80,6 +80,7 @@ ROBOTICS_CS461EX1_Task/
 │   ├── convert_robomimic_hdf5_to_npz.py
 │   ├── evaluate.py
 │   ├── evaluate_push_rollout.py
+│   ├── export_robomimic_rollout_video.py
 │   ├── generate_mujoco_push_demos.py
 │   ├── inspect_demo.py
 │   ├── show_config.py
@@ -114,6 +115,12 @@ pip install -r requirements.txt
 
 ```bash
 pip install -r requirements_mujoco.txt
+```
+
+如果你要导出 `robomimic low-dim` 的 rollout 视频，还需要额外依赖：
+
+```bash
+pip install -r requirements_robomimic_rollout.txt
 ```
 
 ## 快速开始
@@ -169,6 +176,15 @@ python scripts/train.py --config configs/robomimic_lift_state_smoke.yaml
 python scripts/evaluate.py \
   --config configs/robomimic_lift_state_smoke.yaml \
   --checkpoint results/robomimic_lift_state_smoke/model_final.pt
+```
+
+5. 导出最小版 rollout 视频
+
+```bash
+python scripts/export_robomimic_rollout_video.py \
+  --config configs/robomimic_lift_state_smoke.yaml \
+  --checkpoint results/robomimic_lift_state_smoke/model_final.pt \
+  --output-video results/robomimic_lift_state_smoke/robomimic_rollout.mp4
 ```
 
 更详细的数据规范见：
@@ -294,7 +310,8 @@ MuJoCo 细节说明见：
 ## 当前状态与边界
 
 - 当前最稳的正式实验入口是 `robomimic low-dim -> npz -> offline train / eval`
-- 当前还没有直接对接 robomimic 标准环境做闭环 rollout
+- 当前已经支持 robomimic low-dim 的最小版单条 rollout 视频导出
+- 当前还没有做标准 benchmark 级别的多 rollout 评测与汇总
 - MuJoCo push smoke 已经能跑通完整闭环链路，但不是标准 benchmark
 - 当前仓库依然是为课程实验整理的本地 baseline 工程，不是官方仓库原样复现
 

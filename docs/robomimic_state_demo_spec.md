@@ -88,6 +88,15 @@ python scripts/evaluate.py \
   --checkpoint results/robomimic_lift_state_smoke/model_final.pt
 ```
 
+导出最小版 rollout 视频：
+
+```bash
+python scripts/export_robomimic_rollout_video.py \
+  --config configs/robomimic_lift_state_smoke.yaml \
+  --checkpoint results/robomimic_lift_state_smoke/model_final.pt \
+  --output-video results/robomimic_lift_state_smoke/robomimic_rollout.mp4
+```
+
 ## 当前边界
 
 当前这条 robomimic 路线已经支持：
@@ -96,6 +105,10 @@ python scripts/evaluate.py \
 - `inspect_demo`
 - `offline train`
 - `offline eval`
+- 最小版单条 rollout 视频导出
 
-当前还没有直接接入 robomimic 标准仿真环境做闭环 rollout。
-如果后续需要这部分，需要额外补环境 wrapper 和评测桥接层。
+当前这条视频导出路径仍然是最小版：
+
+- 默认面向 `Lift + low-dim`
+- 主要目标是导出单条 `mp4`
+- 还没有做标准 benchmark 级别的多 rollout 评测汇总

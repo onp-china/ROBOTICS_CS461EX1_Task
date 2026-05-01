@@ -24,7 +24,8 @@ from _runtime import (
 )
 
 
-CHECKPOINT_RE = re.compile(r"epoch=(?P<epoch>\d+)-test_mean_score=(?P<score>-?\d+(?:\.\d+)?)\.ckpt$")
+TEST_SCORE_CHECKPOINT_RE = re.compile(r"epoch=(?P<epoch>\d+)-test_mean_score=(?P<score>-?\d+(?:\.\d+)?)\.ckpt$")
+VAL_LOSS_CHECKPOINT_RE = re.compile(r"epoch=(?P<epoch>\d+)-val_loss=(?P<loss>-?\d+(?:\.\d+)?)\.ckpt$")
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,24 +55,43 @@ def summarize_run(run_dir: Path, task_name: str, seed: int) -> dict | None:
             final_val_loss = float(row["val_loss"])
 
     best_checkpoint = ""
-    best_checkpoint_score = None
+    best_checkpoint_metric_name = None
+    best_checkpoint_metric_value = None
     checkpoints_dir = run_dir / "checkpoints"
     if checkpoints_dir.is_dir():
         best_epoch = -1
         for checkpoint in checkpoints_dir.glob("epoch=*-test_mean_score=*.ckpt"):
-            match = CHECKPOINT_RE.match(checkpoint.name)
+            match = TEST_SCORE_CHECKPOINT_RE.match(checkpoint.name)
             if not match:
                 continue
             epoch = int(match.group("epoch"))
             score = float(match.group("score"))
             if (
-                best_checkpoint_score is None
-                or score > best_checkpoint_score
-                or (score == best_checkpoint_score and epoch > best_epoch)
+                best_checkpoint_metric_value is None
+                or score > best_checkpoint_metric_value
+                or (score == best_checkpoint_metric_value and epoch > best_epoch)
             ):
-                best_checkpoint_score = score
+                best_checkpoint_metric_name = "test_mean_score"
+                best_checkpoint_metric_value = score
                 best_epoch = epoch
                 best_checkpoint = str(checkpoint)
+        if not best_checkpoint:
+            best_epoch = -1
+            for checkpoint in checkpoints_dir.glob("epoch=*-val_loss=*.ckpt"):
+                match = VAL_LOSS_CHECKPOINT_RE.match(checkpoint.name)
+                if not match:
+                    continue
+                epoch = int(match.group("epoch"))
+                val_loss = float(match.group("loss"))
+                if (
+                    best_checkpoint_metric_value is None
+                    or val_loss < best_checkpoint_metric_value
+                    or (val_loss == best_checkpoint_metric_value and epoch > best_epoch)
+                ):
+                    best_checkpoint_metric_name = "val_loss"
+                    best_checkpoint_metric_value = val_loss
+                    best_epoch = epoch
+                    best_checkpoint = str(checkpoint)
         if not best_checkpoint and (checkpoints_dir / "latest.ckpt").is_file():
             best_checkpoint = str(checkpoints_dir / "latest.ckpt")
 
@@ -80,11 +100,22 @@ def summarize_run(run_dir: Path, task_name: str, seed: int) -> dict | None:
         "seed": seed,
         "run_dir": str(run_dir),
         "best_checkpoint": best_checkpoint,
-        "best_checkpoint_score": best_checkpoint_score,
+        "best_checkpoint_metric_name": best_checkpoint_metric_name,
+        "best_checkpoint_metric_value": best_checkpoint_metric_value,
         "best_test_mean_score": best_test_mean_score,
         "final_test_mean_score": final_test_mean_score,
         "final_val_loss": final_val_loss,
     }
+
+
+def format_checkpoint_metric(metric_name: str | None, value: float | None) -> str:
+    if metric_name is None or value is None:
+        return "-"
+    if metric_name == "test_mean_score":
+        return f"test/mean_score={value:.6f}"
+    if metric_name == "val_loss":
+        return f"val_loss={value:.6f}"
+    return f"{metric_name}={value:.6f}"
 
 
 def write_csv(rows: list[dict], path: Path) -> None:
@@ -94,7 +125,8 @@ def write_csv(rows: list[dict], path: Path) -> None:
         "seed",
         "run_dir",
         "best_checkpoint",
-        "best_checkpoint_score",
+        "best_checkpoint_metric_name",
+        "best_checkpoint_metric_value",
         "best_test_mean_score",
         "final_test_mean_score",
         "final_val_loss",
@@ -113,15 +145,19 @@ def write_markdown(rows: list[dict], path: Path) -> None:
         "",
         "## Per-run",
         "",
-        "| task | seed | best checkpoint | best `test/mean_score` | final `test/mean_score` | final `val_loss` |",
-        "| --- | ---: | --- | ---: | ---: | ---: |",
+        "| task | seed | best checkpoint | best checkpoint metric | best `test/mean_score` | final `test/mean_score` | final `val_loss` |",
+        "| --- | ---: | --- | --- | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
-            "| {task} | {seed} | {best_checkpoint} | {best_test_mean_score} | {final_test_mean_score} | {final_val_loss} |".format(
+            "| {task} | {seed} | {best_checkpoint} | {best_checkpoint_metric} | {best_test_mean_score} | {final_test_mean_score} | {final_val_loss} |".format(
                 task=row["task"],
                 seed=row["seed"],
                 best_checkpoint=row["best_checkpoint"] or "-",
+                best_checkpoint_metric=format_checkpoint_metric(
+                    row.get("best_checkpoint_metric_name"),
+                    row.get("best_checkpoint_metric_value"),
+                ),
                 best_test_mean_score=format_optional(row["best_test_mean_score"]),
                 final_test_mean_score=format_optional(row["final_test_mean_score"]),
                 final_val_loss=format_optional(row["final_val_loss"]),
@@ -136,13 +172,13 @@ def write_markdown(rows: list[dict], path: Path) -> None:
             continue
         scores = [row["best_test_mean_score"] for row in task_rows if row["best_test_mean_score"] is not None]
         if len(scores) != 3:
-            continue
+            scores = []
         val_losses = [row["final_val_loss"] for row in task_rows if row["final_val_loss"] is not None]
         aggregate_lines.append(
             "| {task} | {score_mean} | {score_std} | {val_mean} | {val_std} |".format(
                 task=task_name,
-                score_mean=f"{mean(scores):.6f}",
-                score_std=f"{population_std(scores):.6f}",
+                score_mean=f"{mean(scores):.6f}" if scores else "-",
+                score_std=f"{population_std(scores):.6f}" if len(scores) > 1 else "-",
                 val_mean=f"{mean(val_losses):.6f}" if len(val_losses) == 3 else "-",
                 val_std=f"{population_std(val_losses):.6f}" if len(val_losses) == 3 else "-",
             )

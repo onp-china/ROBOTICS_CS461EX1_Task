@@ -6,6 +6,7 @@
 - 只支持 `low_dim_abs`
 - 训练入口固定为 `python mydiffusion_D1/train.py ...`
 - 训练所需的最小 `diffusion_policy` 子集已经内置到 `mydiffusion_D1/diffusion_policy/`
+- 默认训练配置先禁用 rollout，优先保证离线训练链可直接跑通
 
 当前支持的任务：
 
@@ -95,6 +96,14 @@ python mydiffusion_D1/train.py \
   training.device=mps
 ```
 
+默认训练不会在训练过程中自动创建 rollout 环境，也不会自动导出 MP4。闭环 rollout 与视频导出改为单独脚本：
+
+```bash
+python mydiffusion_D1/scripts/export_rollout_video.py \
+  --task mug_cleanup_d1_lowdim_abs \
+  --checkpoint /path/to/checkpoints/latest.ckpt
+```
+
 如果当前机器没有 MPS，可改成：
 
 ```bash
@@ -141,13 +150,10 @@ python mydiffusion_D1/scripts/collect_baseline_results.py
 
 - `logs.json.txt`
   - 训练过程中的逐步日志
-  - 常见字段包括 `train_loss`、`val_loss`、`train_action_mse_error`、`test/mean_score`
+  - 常见字段包括 `train_loss`、`val_loss`、`train_action_mse_error`
 - `checkpoints/`
   - `latest.ckpt`
-  - 按 `test_mean_score` 保留的 top-k checkpoint
-- `media/*.mp4`
-  - rollout 视频
-  - 默认配置下主要是测试 rollout 的可视化视频
+  - 按 `val_loss` 保留的 top-k checkpoint
 - `wandb/`
   - offline wandb 记录
 
@@ -181,14 +187,15 @@ python mydiffusion_D1/scripts/plot_results.py
 - 单次训练曲线
   - `train_loss / val_loss`
   - `train_action_mse_error`
-  - `test/mean_score`
+  - 如果日志里包含 rollout 分数，也会额外画出 `test/mean_score`
 - 多 seed 聚合图
-  - 同一任务的 `best test/mean_score` 均值与标准差
+  - 同一任务的最佳 checkpoint 指标
   - 同一任务的 `final val_loss` 均值与标准差
 - 跨任务柱状图
-  - 三个 D1 任务的 `best test/mean_score`
+  - 三个 D1 任务的最佳 checkpoint 指标
   - 三个 D1 任务的 `final val_loss`
 - rollout 视频抽帧拼图
+  - 会同时检查训练期 `media/` 和单独导出脚本生成的 `rollout_export/media/`
 
 ### 抽帧拼图是什么
 

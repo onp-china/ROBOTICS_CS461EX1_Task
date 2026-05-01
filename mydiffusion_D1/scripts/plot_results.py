@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import sys
 from pathlib import Path
 
@@ -23,6 +24,10 @@ from _runtime import (
     reports_dir,
     task_config_name,
 )
+
+
+TEST_SCORE_CHECKPOINT_RE = re.compile(r"epoch=(?P<epoch>\d+)-test_mean_score=(?P<score>-?\d+(?:\.\d+)?)\.ckpt$")
+VAL_LOSS_CHECKPOINT_RE = re.compile(r"epoch=(?P<epoch>\d+)-val_loss=(?P<loss>-?\d+(?:\.\d+)?)\.ckpt$")
 
 
 def parse_args() -> argparse.Namespace:
@@ -94,7 +99,7 @@ def discover_runs(output_root: Path, tasks: list[str], seed_filters: set[int] | 
                     "seed": seed,
                     "run_dir": seed_dir,
                     "log_path": seed_dir / "logs.json.txt",
-                    "media_dir": seed_dir / "media",
+                    "media_dirs": [seed_dir / "media", seed_dir / "rollout_export" / "media"],
                 }
             )
     return runs
@@ -120,10 +125,48 @@ def summarize_run(run_dir: Path, task_name: str, seed: int) -> dict | None:
         if "val_loss" in row:
             final_val_loss = float(row["val_loss"])
 
+    best_checkpoint_metric_name = None
+    best_checkpoint_metric_value = None
+    checkpoints_dir = run_dir / "checkpoints"
+    if checkpoints_dir.is_dir():
+        best_epoch = -1
+        for checkpoint in checkpoints_dir.glob("epoch=*-test_mean_score=*.ckpt"):
+            match = TEST_SCORE_CHECKPOINT_RE.match(checkpoint.name)
+            if not match:
+                continue
+            epoch = int(match.group("epoch"))
+            score = float(match.group("score"))
+            if (
+                best_checkpoint_metric_value is None
+                or score > best_checkpoint_metric_value
+                or (score == best_checkpoint_metric_value and epoch > best_epoch)
+            ):
+                best_checkpoint_metric_name = "test_mean_score"
+                best_checkpoint_metric_value = score
+                best_epoch = epoch
+        if best_checkpoint_metric_name is None:
+            best_epoch = -1
+            for checkpoint in checkpoints_dir.glob("epoch=*-val_loss=*.ckpt"):
+                match = VAL_LOSS_CHECKPOINT_RE.match(checkpoint.name)
+                if not match:
+                    continue
+                epoch = int(match.group("epoch"))
+                val_loss = float(match.group("loss"))
+                if (
+                    best_checkpoint_metric_value is None
+                    or val_loss < best_checkpoint_metric_value
+                    or (val_loss == best_checkpoint_metric_value and epoch > best_epoch)
+                ):
+                    best_checkpoint_metric_name = "val_loss"
+                    best_checkpoint_metric_value = val_loss
+                    best_epoch = epoch
+
     return {
         "task": task_name,
         "seed": seed,
         "run_dir": str(run_dir),
+        "best_checkpoint_metric_name": best_checkpoint_metric_name,
+        "best_checkpoint_metric_value": best_checkpoint_metric_value,
         "best_test_mean_score": best_test_mean_score,
         "final_test_mean_score": final_test_mean_score,
         "final_val_loss": final_val_loss,
@@ -136,6 +179,8 @@ def save_summary_csv(rows: list[dict], reports_root: Path) -> Path:
         "task",
         "seed",
         "run_dir",
+        "best_checkpoint_metric_name",
+        "best_checkpoint_metric_value",
         "best_test_mean_score",
         "final_test_mean_score",
         "final_val_loss",
@@ -157,9 +202,16 @@ def load_or_build_summary(reports_root: Path, runs: list[dict]) -> list[dict]:
             for row in reader:
                 parsed = dict(row)
                 parsed["seed"] = int(parsed["seed"])
-                for key in ("best_test_mean_score", "final_test_mean_score", "final_val_loss"):
+                for key in (
+                    "best_checkpoint_metric_value",
+                    "best_test_mean_score",
+                    "final_test_mean_score",
+                    "final_val_loss",
+                ):
                     value = parsed.get(key)
                     parsed[key] = None if value in (None, "", "-") else float(value)
+                metric_name = parsed.get("best_checkpoint_metric_name")
+                parsed["best_checkpoint_metric_name"] = None if metric_name in (None, "", "-") else metric_name
                 rows.append(parsed)
         return rows
 
@@ -187,6 +239,14 @@ def _extract_series(rows: list[dict], key: str) -> tuple[np.ndarray, np.ndarray]
     if not xs:
         return np.array([]), np.array([])
     return np.asarray(xs, dtype=np.float32), np.asarray(ys, dtype=np.float32)
+
+
+def _metric_title(metric_name: str | None) -> str:
+    if metric_name == "test_mean_score":
+        return "Best Test Mean Score"
+    if metric_name == "val_loss":
+        return "Best Checkpoint Val Loss"
+    return "Best Checkpoint Metric"
 
 
 def plot_run_curves(run: dict, curves_dir: Path) -> list[Path]:
@@ -263,38 +323,59 @@ def plot_task_aggregate(task_name: str, rows: list[dict], aggregates_dir: Path) 
 
     task_rows = sorted(task_rows, key=lambda row: int(row["seed"]))
     seeds = [str(row["seed"]) for row in task_rows]
+    best_metric_names = sorted(
+        {
+            row.get("best_checkpoint_metric_name")
+            for row in task_rows
+            if row.get("best_checkpoint_metric_name") is not None and row.get("best_checkpoint_metric_value") is not None
+        }
+    )
+    plot_best_metric = len(best_metric_names) == 1
+    best_metric_name = best_metric_names[0] if plot_best_metric else None
+    best_metric_values = [row.get("best_checkpoint_metric_value") for row in task_rows]
     scores = [row["best_test_mean_score"] for row in task_rows]
     val_losses = [row["final_val_loss"] for row in task_rows]
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
+    subplot_count = 2 if plot_best_metric else 1
+    fig, axes = plt.subplots(1, subplot_count, figsize=(10 if plot_best_metric else 5.6, 4.5))
+    if subplot_count == 1:
+        axes = [axes]
 
-    score_values = [float(value) for value in scores if value is not None]
-    axes[0].bar(seeds, [0.0 if value is None else float(value) for value in scores], color="#1f77b4", alpha=0.85)
-    if score_values:
-        score_mean = mean(score_values)
-        score_std = population_std(score_values)
-        axes[0].axhline(score_mean, color="#d62728", linestyle="--", linewidth=1.4, label=f"mean={score_mean:.3f}")
-        if len(score_values) > 1:
-            axes[0].axhspan(score_mean - score_std, score_mean + score_std, color="#d62728", alpha=0.12, label=f"std={score_std:.3f}")
-        axes[0].legend()
-    axes[0].set_title("Best Test Mean Score")
-    axes[0].set_xlabel("seed")
-    axes[0].set_ylabel("score")
-    axes[0].grid(axis="y", alpha=0.3)
+    axis_offset = 0
+    if plot_best_metric:
+        best_values = [float(value) for value in best_metric_values if value is not None]
+        axes[0].bar(
+            seeds,
+            [0.0 if value is None else float(value) for value in best_metric_values],
+            color="#1f77b4",
+            alpha=0.85,
+        )
+        if best_values:
+            best_mean = mean(best_values)
+            best_std = population_std(best_values)
+            axes[0].axhline(best_mean, color="#d62728", linestyle="--", linewidth=1.4, label=f"mean={best_mean:.3f}")
+            if len(best_values) > 1:
+                axes[0].axhspan(best_mean - best_std, best_mean + best_std, color="#d62728", alpha=0.12, label=f"std={best_std:.3f}")
+            axes[0].legend()
+        axes[0].set_title(_metric_title(best_metric_name))
+        axes[0].set_xlabel("seed")
+        axes[0].set_ylabel("score" if best_metric_name == "test_mean_score" else "loss")
+        axes[0].grid(axis="y", alpha=0.3)
+        axis_offset = 1
 
     val_values = [float(value) for value in val_losses if value is not None]
-    axes[1].bar(seeds, [0.0 if value is None else float(value) for value in val_losses], color="#2ca02c", alpha=0.85)
+    axes[axis_offset].bar(seeds, [0.0 if value is None else float(value) for value in val_losses], color="#2ca02c", alpha=0.85)
     if val_values:
         val_mean = mean(val_values)
         val_std = population_std(val_values)
-        axes[1].axhline(val_mean, color="#9467bd", linestyle="--", linewidth=1.4, label=f"mean={val_mean:.3f}")
+        axes[axis_offset].axhline(val_mean, color="#9467bd", linestyle="--", linewidth=1.4, label=f"mean={val_mean:.3f}")
         if len(val_values) > 1:
-            axes[1].axhspan(val_mean - val_std, val_mean + val_std, color="#9467bd", alpha=0.12, label=f"std={val_std:.3f}")
-        axes[1].legend()
-    axes[1].set_title("Final Val Loss")
-    axes[1].set_xlabel("seed")
-    axes[1].set_ylabel("loss")
-    axes[1].grid(axis="y", alpha=0.3)
+            axes[axis_offset].axhspan(val_mean - val_std, val_mean + val_std, color="#9467bd", alpha=0.12, label=f"std={val_std:.3f}")
+        axes[axis_offset].legend()
+    axes[axis_offset].set_title("Final Val Loss")
+    axes[axis_offset].set_xlabel("seed")
+    axes[axis_offset].set_ylabel("loss")
+    axes[axis_offset].grid(axis="y", alpha=0.3)
 
     fig.suptitle(f"{task_name} multi-seed summary")
     fig.tight_layout()
@@ -314,32 +395,45 @@ def plot_cross_task_bars(rows: list[dict], aggregates_dir: Path) -> list[Path]:
     if not tasks:
         return []
 
-    score_means = []
-    score_stds = []
+    metric_names = {
+        row.get("best_checkpoint_metric_name")
+        for row in rows
+        if row.get("best_checkpoint_metric_name") is not None and row.get("best_checkpoint_metric_value") is not None
+    }
+    plot_best_metric = len(metric_names) == 1
+    best_metric_name = next(iter(metric_names)) if plot_best_metric else None
+    best_metric_means = []
+    best_metric_stds = []
     val_means = []
     val_stds = []
     for task in tasks:
-        score_values = [float(row["best_test_mean_score"]) for row in grouped[task] if row["best_test_mean_score"] is not None]
+        metric_values = [
+            float(row["best_checkpoint_metric_value"])
+            for row in grouped[task]
+            if row.get("best_checkpoint_metric_name") == best_metric_name
+            and row.get("best_checkpoint_metric_value") is not None
+        ]
         val_values = [float(row["final_val_loss"]) for row in grouped[task] if row["final_val_loss"] is not None]
-        score_means.append(mean(score_values) if score_values else 0.0)
-        score_stds.append(population_std(score_values) if len(score_values) > 1 else 0.0)
+        best_metric_means.append(mean(metric_values) if metric_values else 0.0)
+        best_metric_stds.append(population_std(metric_values) if len(metric_values) > 1 else 0.0)
         val_means.append(mean(val_values) if val_values else 0.0)
         val_stds.append(population_std(val_values) if len(val_values) > 1 else 0.0)
 
     x = np.arange(len(tasks))
     saved: list[Path] = []
 
-    fig, ax = plt.subplots(figsize=(8.5, 4.8))
-    ax.bar(x, score_means, yerr=score_stds, capsize=4, color="#4c78a8", alpha=0.9)
-    ax.set_xticks(x, tasks, rotation=12, ha="right")
-    ax.set_ylabel("best test/mean_score")
-    ax.set_title("D1 best score by task")
-    ax.grid(axis="y", alpha=0.3)
-    fig.tight_layout()
-    score_path = aggregates_dir / "all_tasks_best_score_bar.png"
-    fig.savefig(score_path, dpi=180)
-    plt.close(fig)
-    saved.append(score_path)
+    if plot_best_metric:
+        fig, ax = plt.subplots(figsize=(8.5, 4.8))
+        ax.bar(x, best_metric_means, yerr=best_metric_stds, capsize=4, color="#4c78a8", alpha=0.9)
+        ax.set_xticks(x, tasks, rotation=12, ha="right")
+        ax.set_ylabel("best checkpoint score" if best_metric_name == "test_mean_score" else "best checkpoint loss")
+        ax.set_title(f"D1 {_metric_title(best_metric_name).lower()} by task")
+        ax.grid(axis="y", alpha=0.3)
+        fig.tight_layout()
+        metric_path = aggregates_dir / "all_tasks_best_checkpoint_metric_bar.png"
+        fig.savefig(metric_path, dpi=180)
+        plt.close(fig)
+        saved.append(metric_path)
 
     fig, ax = plt.subplots(figsize=(8.5, 4.8))
     ax.bar(x, val_means, yerr=val_stds, capsize=4, color="#59a14f", alpha=0.9)
@@ -404,10 +498,11 @@ def build_contact_sheet(selected_frames: list[np.ndarray], output_path: Path, ti
 
 
 def plot_contact_sheets(run: dict, contact_dir: Path, max_videos: int, frame_layout: str) -> list[Path]:
-    media_dir = run["media_dir"]
-    if not media_dir.is_dir():
-        return []
-    videos = sorted(media_dir.glob("*.mp4"))
+    videos: list[Path] = []
+    for media_dir in run["media_dirs"]:
+        if media_dir.is_dir():
+            videos.extend(sorted(media_dir.glob("*.mp4")))
+    videos = sorted({video.resolve() for video in videos})
     if not videos:
         return []
 
