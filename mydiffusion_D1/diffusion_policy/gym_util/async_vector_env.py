@@ -317,6 +317,8 @@ class AsyncVectorEnv(VectorEnv):
             are terminated.
         """
         timeout = 0 if terminate else timeout
+        if not hasattr(self, "_state"):
+            return
         try:
             if self._state != AsyncState.DEFAULT:
                 logger.warn(
