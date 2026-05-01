@@ -9,6 +9,7 @@ import numpy as np
 import multiprocessing as mp
 import time
 import sys
+import traceback
 from enum import Enum
 from copy import deepcopy
 
@@ -400,11 +401,18 @@ class AsyncVectorEnv(VectorEnv):
         num_errors = self.num_envs - sum(successes)
         assert num_errors > 0
         for _ in range(num_errors):
-            index, exctype, value = self.error_queue.get()
+            payload = self.error_queue.get()
+            if len(payload) == 4:
+                index, exctype, value, tb_text = payload
+            else:
+                index, exctype, value = payload
+                tb_text = None
             logger.error(
                 "Received the following error from Worker-{0}: "
                 "{1}: {2}".format(index, exctype.__name__, value)
             )
+            if tb_text:
+                logger.error("Worker-{0} traceback:\n{1}".format(index, tb_text))
             logger.error("Shutting down Worker-{0}.".format(index))
             self.parent_pipes[index].close()
             self.parent_pipes[index] = None
@@ -618,7 +626,9 @@ def _worker(index, env_fn, pipe, parent_pipe, shared_memory, error_queue):
                     "`_check_observation_space`}.".format(command)
                 )
     except (KeyboardInterrupt, Exception):
-        error_queue.put((index,) + sys.exc_info()[:2])
+        tb_text = traceback.format_exc()
+        print(tb_text, file=sys.stderr, flush=True)
+        error_queue.put((index,) + sys.exc_info()[:2] + (tb_text,))
         pipe.send((None, False))
     finally:
         env.close()
@@ -677,7 +687,9 @@ def _worker_shared_memory(index, env_fn, pipe, parent_pipe, shared_memory, error
                     "`_check_observation_space`}.".format(command)
                 )
     except (KeyboardInterrupt, Exception):
-        error_queue.put((index,) + sys.exc_info()[:2])
+        tb_text = traceback.format_exc()
+        print(tb_text, file=sys.stderr, flush=True)
+        error_queue.put((index,) + sys.exc_info()[:2] + (tb_text,))
         pipe.send((None, False))
     finally:
         env.close()
