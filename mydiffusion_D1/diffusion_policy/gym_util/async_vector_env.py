@@ -206,7 +206,7 @@ class AsyncVectorEnv(VectorEnv):
             pipe.send(("reset", None))
         self._state = AsyncState.WAITING_RESET
 
-    def reset_wait(self, timeout=None):
+    def reset_wait(self, timeout=None, seed=None, options=None):
         """
         Parameters
         ----------
@@ -218,6 +218,9 @@ class AsyncVectorEnv(VectorEnv):
         observations : sample from `observation_space`
             A batch of observations from the vectorized environment.
         """
+        del seed
+        del options
+
         self._assert_is_running()
         if self._state != AsyncState.WAITING_RESET:
             raise NoAsyncCallError(
