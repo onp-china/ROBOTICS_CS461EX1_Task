@@ -68,10 +68,9 @@ def create_env(env_meta, obs_keys):
     env = EnvUtils.create_env_from_metadata(
         env_meta=env_meta,
         render=False, 
-        # only way to not show collision geometry
-        # is to enable render_offscreen
-        # which uses a lot of RAM.
-        render_offscreen=False,
+        # Rollout video export calls sim.render(), which requires an
+        # offscreen render context to be initialized up front.
+        render_offscreen=True,
         use_image_obs=False, 
     )
     return env
