@@ -32,6 +32,11 @@ class BaseWorkspace:
         """
         pass
 
+    def wait_for_saves(self):
+        if self._saving_thread is not None:
+            self._saving_thread.join()
+            self._saving_thread = None
+
     def save_checkpoint(self, path=None, tag='latest', 
             exclude_keys=None,
             include_keys=None,
@@ -63,6 +68,7 @@ class BaseWorkspace:
             elif key in include_keys:
                 payload['pickles'][key] = dill.dumps(value)
         if use_thread:
+            self.wait_for_saves()
             self._saving_thread = threading.Thread(
                 target=lambda : torch.save(payload, path.open('wb'), pickle_module=dill))
             self._saving_thread.start()

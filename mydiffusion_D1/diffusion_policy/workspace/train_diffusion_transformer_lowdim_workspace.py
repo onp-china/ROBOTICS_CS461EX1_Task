@@ -380,6 +380,7 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                 )
                 self.global_step += 1
                 self.epoch += 1
+        self.wait_for_saves()
         self._maybe_export_training_curves()
         self._maybe_export_best_rollout_video()
 
