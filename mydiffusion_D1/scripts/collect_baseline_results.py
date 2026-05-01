@@ -198,6 +198,7 @@ def main() -> None:
     write_markdown(rows, report_root / "baseline_summary.md")
     print(f"Wrote {report_root / 'baseline_summary.csv'}")
     print(f"Wrote {report_root / 'baseline_summary.md'}")
+    print("Next: python mydiffusion_D1/scripts/plot_results.py")
 
 
 if __name__ == "__main__":

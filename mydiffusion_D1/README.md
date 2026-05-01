@@ -131,6 +131,82 @@ python mydiffusion_D1/scripts/collect_baseline_results.py
 - `mydiffusion_D1/reports/baseline_summary.csv`
 - `mydiffusion_D1/reports/baseline_summary.md`
 
+## 训练结束后的产物
+
+单次训练 run 默认会在：
+
+- `mydiffusion_D1/outputs/<task_config>/<seed>/`
+
+下保留这些结果：
+
+- `logs.json.txt`
+  - 训练过程中的逐步日志
+  - 常见字段包括 `train_loss`、`val_loss`、`train_action_mse_error`、`test/mean_score`
+- `checkpoints/`
+  - `latest.ckpt`
+  - 按 `test_mean_score` 保留的 top-k checkpoint
+- `media/*.mp4`
+  - rollout 视频
+  - 默认配置下主要是测试 rollout 的可视化视频
+- `wandb/`
+  - offline wandb 记录
+
+汇总脚本会额外生成：
+
+- `mydiffusion_D1/reports/baseline_summary.csv`
+- `mydiffusion_D1/reports/baseline_summary.md`
+
+## 生成图表
+
+先汇总结果：
+
+```bash
+python mydiffusion_D1/scripts/collect_baseline_results.py
+```
+
+再生成图表：
+
+```bash
+python mydiffusion_D1/scripts/plot_results.py
+```
+
+默认会把图输出到：
+
+- `mydiffusion_D1/reports/figures/curves/`
+- `mydiffusion_D1/reports/figures/aggregates/`
+- `mydiffusion_D1/reports/figures/contact_sheets/`
+
+生成内容包括：
+
+- 单次训练曲线
+  - `train_loss / val_loss`
+  - `train_action_mse_error`
+  - `test/mean_score`
+- 多 seed 聚合图
+  - 同一任务的 `best test/mean_score` 均值与标准差
+  - 同一任务的 `final val_loss` 均值与标准差
+- 跨任务柱状图
+  - 三个 D1 任务的 `best test/mean_score`
+  - 三个 D1 任务的 `final val_loss`
+- rollout 视频抽帧拼图
+
+### 抽帧拼图是什么
+
+抽帧拼图是把一条 rollout 视频中的关键时刻截成静态图，再横向拼成一张图，用于报告或论文展示。
+
+当前默认规则固定为 4 帧：
+
+- 起点
+- `1/3`
+- `2/3`
+- 终点
+
+也就是你会得到类似下面这种静态展示：
+
+- `reset -> 中途阶段 1 -> 中途阶段 2 -> 最终结果`
+
+它比直接插入 mp4 更适合写实验报告，也更方便比较不同任务、不同 seed、不同模型版本。
+
 ## 目录约定
 
 ```text
