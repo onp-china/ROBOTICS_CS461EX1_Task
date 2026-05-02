@@ -17,9 +17,11 @@ from _runtime import MIMICGEN_TASKS, MYDIFFUSION_D1_ROOT, add_repo_paths, fail, 
 TASK_CHOICES = tuple(task_config_name(task_name) for task_name in MIMICGEN_TASKS)
 BASELINE_PROFILE = "baseline"
 MUG_LOC_TUNED_PROFILE = "mug_cleanup_loc_tuned"
-PROFILE_CHOICES = (BASELINE_PROFILE, MUG_LOC_TUNED_PROFILE)
+MUG_ATTNRES_TUNED_PROFILE = "mug_cleanup_attnres_tuned"
+PROFILE_CHOICES = (BASELINE_PROFILE, MUG_LOC_TUNED_PROFILE, MUG_ATTNRES_TUNED_PROFILE)
 BASELINE_CONFIG_NAME = "train_diffusion_transformer_mimicgen_d1_lowdim_abs_workspace"
 MUG_LOC_TUNED_CONFIG_NAME = "train_diffusion_transformer_mimicgen_d1_mug_cleanup_loc_tuned_workspace"
+MUG_ATTNRES_TUNED_CONFIG_NAME = "train_diffusion_transformer_mimicgen_d1_mug_cleanup_attnres_tuned_workspace"
 MUG_LOC_TUNED_TASK = "mug_cleanup_d1_lowdim_abs"
 
 
@@ -52,6 +54,13 @@ def main() -> None:
                 f"`{MUG_LOC_TUNED_TASK}`. Received `{args.task}`."
             )
         config_name = MUG_LOC_TUNED_CONFIG_NAME
+    elif args.profile == MUG_ATTNRES_TUNED_PROFILE:
+        if args.task != MUG_LOC_TUNED_TASK:
+            fail(
+                "The `mug_cleanup_attnres_tuned` profile only supports "
+                f"`{MUG_LOC_TUNED_TASK}`. Received `{args.task}`."
+            )
+        config_name = MUG_ATTNRES_TUNED_CONFIG_NAME
 
     command = [
         sys.executable,

@@ -340,10 +340,22 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                 if (self.epoch % cfg.training.val_every) == 0:
                     with torch.no_grad():
                         val_losses = list()
+                        val_mse_values = list()
                         for batch_idx, batch in enumerate(val_dataloader):
                             batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
                             loss = self.model.compute_loss(batch)
                             val_losses.append(loss)
+                            obs_dict = {'obs': batch['obs']}
+                            gt_action = batch['action']
+                            result = policy.predict_action(obs_dict)
+                            if cfg.pred_action_steps_only:
+                                pred_action = result['action']
+                                start = cfg.n_obs_steps - 1
+                                end = start + cfg.n_action_steps
+                                gt_action = gt_action[:,start:end]
+                            else:
+                                pred_action = result['action_pred']
+                            val_mse_values.append(torch.nn.functional.mse_loss(pred_action, gt_action).item())
                             if (cfg.training.max_val_steps is not None) \
                                 and batch_idx >= (cfg.training.max_val_steps-1):
                                 break
@@ -351,6 +363,8 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                             val_loss = torch.mean(torch.tensor(val_losses)).item()
                             # log epoch average validation loss
                             step_log['val_loss'] = val_loss
+                        if len(val_mse_values) > 0:
+                            step_log['val_action_mse_error'] = float(np.mean(val_mse_values))
             
                 # run diffusion sampling on a training batch
                 if (self.epoch % cfg.training.sample_every) == 0:

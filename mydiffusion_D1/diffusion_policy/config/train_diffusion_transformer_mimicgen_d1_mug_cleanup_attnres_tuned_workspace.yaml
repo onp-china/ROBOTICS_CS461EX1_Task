@@ -1,0 +1,14 @@
+defaults:
+  - train_diffusion_transformer_mimicgen_d1_mug_cleanup_loc_tuned_workspace
+  - _self_
+
+name: train_diffusion_transformer_mimicgen_d1_mug_cleanup_attnres_tuned
+exp_name: "attnres_tuned"
+variant_name: "attnres_distance_weighted"
+
+policy:
+  model:
+    use_attn_res: True
+    attn_res_block_size: 2
+    attn_res_norm_type: rmsnorm
+    attn_res_query_init_std: 0.02

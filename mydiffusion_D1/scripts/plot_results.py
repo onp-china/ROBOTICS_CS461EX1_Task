@@ -48,6 +48,10 @@ def parse_args() -> argparse.Namespace:
         default="fixed4",
         help="Frame extraction layout. Only fixed4 is supported in this version.",
     )
+    parser.add_argument("--compare-task", default=None, help="Task config name for baseline vs AttnRes comparison.")
+    parser.add_argument("--compare-seed", type=int, default=None, help="Seed for baseline vs AttnRes comparison.")
+    parser.add_argument("--baseline-exp", default="baseline_tuned", help="Baseline experiment name for comparison mode.")
+    parser.add_argument("--attnres-exp", default="attnres_tuned", help="AttnRes experiment name for comparison mode.")
     return parser.parse_args()
 
 
@@ -301,6 +305,158 @@ def _metric_title(metric_name: str | None) -> str:
     return "Best Checkpoint Metric"
 
 
+def _resolve_accuracy_series(rows: list[dict]) -> tuple[np.ndarray, np.ndarray, str] | None:
+    for key, label in (
+        ("test/contact_rate", "val_success_rate"),
+        ("test/mean_score", "val_accuracy"),
+        ("train/mean_score", "train_accuracy"),
+    ):
+        xs, ys = _extract_series(rows, key)
+        if len(xs) > 0:
+            return xs, ys, label
+    return None
+
+
+def _extract_run_series(rows: list[dict], key: str) -> tuple[np.ndarray, np.ndarray]:
+    return _extract_series(rows, key)
+
+
+def _load_rows_for_run(run_dir: Path) -> list[dict]:
+    log_path = run_dir / "logs.json.txt"
+    if not log_path.is_file():
+        raise FileNotFoundError(f"Missing log file: {log_path}")
+    rows = read_json_lines(log_path)
+    if not rows:
+        raise ValueError(f"No readable json lines in: {log_path}")
+    return rows
+
+
+def _find_run_dir_for_compare(output_root: Path, task: str, exp_name: str, seed: int) -> Path:
+    candidate = output_root / task / exp_name
+    if not candidate.is_dir():
+        raise FileNotFoundError(f"Missing experiment directory: {candidate}")
+    direct_run_dir = candidate / str(seed)
+    if direct_run_dir.is_dir():
+        return direct_run_dir
+
+    nested_matches = []
+    for variant_dir in sorted(candidate.iterdir(), key=lambda path: path.name):
+        if not variant_dir.is_dir():
+            continue
+        run_dir = variant_dir / str(seed)
+        if run_dir.is_dir():
+            nested_matches.append(run_dir)
+
+    if len(nested_matches) == 1:
+        return nested_matches[0]
+    if len(nested_matches) > 1:
+        raise FileNotFoundError(
+            f"Multiple run directories found for task={task}, exp_name={exp_name}, seed={seed}: "
+            + ", ".join(str(path) for path in nested_matches)
+        )
+
+    raise FileNotFoundError(f"Missing run directory under {candidate} for seed={seed}")
+
+
+def plot_baseline_vs_attnres(
+    *,
+    output_root: Path,
+    reports_root: Path,
+    task: str,
+    seed: int,
+    baseline_exp: str,
+    attnres_exp: str,
+) -> list[Path]:
+    plt = load_matplotlib_pyplot()
+    curves_dir = reports_root / "figures" / "comparisons"
+    curves_dir.mkdir(parents=True, exist_ok=True)
+
+    baseline_run_dir = _find_run_dir_for_compare(output_root, task, baseline_exp, seed)
+    attnres_run_dir = _find_run_dir_for_compare(output_root, task, attnres_exp, seed)
+    baseline_rows = _load_rows_for_run(baseline_run_dir)
+    attnres_rows = _load_rows_for_run(attnres_run_dir)
+
+    saved: list[Path] = []
+
+    # loss comparison
+    fig, ax = plt.subplots(figsize=(8.6, 5.2))
+    for rows, color, linestyle, prefix in (
+        (baseline_rows, "#2563eb", "-", "Baseline"),
+        (attnres_rows, "#ef4444", "--", "AttnRes"),
+    ):
+        for key, suffix in (("train_loss", "Train Loss"), ("val_loss", "Val Loss")):
+            xs, ys = _extract_run_series(rows, key)
+            if len(xs) > 0:
+                ax.plot(xs, ys, color=color, linestyle=linestyle, linewidth=2.0, label=f"{prefix} {suffix}")
+    ax.set_title(f"Baseline vs AttnRes - {task} ({seed=}, 100 Epochs)".replace("seed=", "seed "))
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Loss")
+    ax.grid(alpha=0.3)
+    ax.legend(loc="best")
+    loss_path = curves_dir / f"{task}_seed{seed}_loss_comparison.png"
+    fig.tight_layout()
+    fig.savefig(loss_path, dpi=180)
+    plt.close(fig)
+    saved.append(loss_path)
+
+    # mse + accuracy comparison
+    fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.1))
+    panel_specs = [
+        ("train_action_mse_error", "Train MSE", "MSE"),
+        ("val_action_mse_error", "Validation MSE", "MSE"),
+    ]
+    for axis, (metric_key, title, ylabel) in zip(axes[:2], panel_specs):
+        for rows, color, linestyle, prefix in (
+            (baseline_rows, "#2563eb", "-", "Baseline"),
+            (attnres_rows, "#ef4444", "--", "AttnRes"),
+        ):
+            xs, ys = _extract_run_series(rows, metric_key)
+            if len(xs) > 0:
+                axis.plot(xs, ys, color=color, linestyle=linestyle, linewidth=2.0, label=prefix)
+        axis.set_title(title)
+        axis.set_xlabel("Epoch")
+        axis.set_ylabel(ylabel)
+        axis.grid(alpha=0.3)
+        axis.legend(loc="best")
+
+    acc_axis = axes[2]
+    plotted_accuracy = False
+    for rows, color, linestyle, prefix in (
+        (baseline_rows, "#2563eb", "-", "Baseline"),
+        (attnres_rows, "#ef4444", "--", "AttnRes"),
+    ):
+        xs, ys = _extract_run_series(rows, "test/contact_rate")
+        if len(xs) > 0:
+            acc_axis.plot(xs, ys, color=color, linestyle=linestyle, linewidth=2.0, label=prefix)
+            plotted_accuracy = True
+    acc_axis.set_title("Validation Success Rate")
+    acc_axis.set_xlabel("Epoch")
+    acc_axis.set_ylabel("Success Rate")
+    acc_axis.set_ylim(0.0, 1.05)
+    acc_axis.grid(alpha=0.3)
+    if plotted_accuracy:
+        acc_axis.legend(loc="best")
+    else:
+        acc_axis.text(
+            0.5,
+            0.5,
+            "rollout metrics unavailable",
+            ha="center",
+            va="center",
+            fontsize=12,
+            transform=acc_axis.transAxes,
+        )
+
+    fig.suptitle(f"Baseline vs AttnRes - {task} (100 Epochs)", fontsize=18, fontweight="bold")
+    fig.tight_layout()
+    mse_path = curves_dir / f"{task}_seed{seed}_mse_accuracy_comparison.png"
+    fig.savefig(mse_path, dpi=180)
+    plt.close(fig)
+    saved.append(mse_path)
+
+    return saved
+
+
 def plot_run_curves(run: dict, curves_dir: Path) -> list[Path]:
     plt = load_matplotlib_pyplot()
     log_path = run["log_path"]
@@ -317,37 +473,58 @@ def plot_run_curves(run: dict, curves_dir: Path) -> list[Path]:
     base_name = f"{task}_{exp_name}_seed{seed}"
     saved: list[Path] = []
 
-    if any(any(key in row for key in ("train_loss", "val_loss")) for row in rows):
-        fig, ax = plt.subplots(figsize=(8, 4.5))
-        for key, label in (("train_loss", "Train Loss"), ("val_loss", "Val Loss")):
+    has_loss_like = any(
+        any(key in row for key in ("train_loss", "val_loss", "train_action_mse_error"))
+        for row in rows
+    )
+    if has_loss_like:
+        fig, ax = plt.subplots(figsize=(10.2, 5.8))
+        plotted = False
+        for key, label, color in (
+            ("train_loss", "train_loss", "#1f77b4"),
+            ("val_loss", "val_loss", "#ff7f0e"),
+            ("train_action_mse_error", "train_mse", "#d62728"),
+        ):
             xs, ys = _extract_series(rows, key)
             if len(xs) > 0:
-                ax.plot(xs, ys, label=label, linewidth=1.6)
-        ax.set_title(f"{task} {exp_name} seed {seed} loss curves")
-        ax.set_xlabel("epoch / global_step")
-        ax.set_ylabel("loss")
-        ax.grid(alpha=0.3)
-        ax.legend()
-        path = curves_dir / f"{base_name}_loss_curve.png"
-        fig.tight_layout()
-        fig.savefig(path, dpi=180)
-        plt.close(fig)
-        saved.append(path)
+                ax.plot(xs, ys, label=label, linewidth=1.8, color=color)
+                plotted = True
 
-    if any("train_action_mse_error" in row for row in rows):
-        fig, ax = plt.subplots(figsize=(8, 4.5))
-        xs, ys = _extract_series(rows, "train_action_mse_error")
-        if len(xs) > 0:
-            ax.plot(xs, ys, color="#d95f02", linewidth=1.6)
-        ax.set_title(f"{task} {exp_name} seed {seed} train action MSE")
-        ax.set_xlabel("epoch / global_step")
-        ax.set_ylabel("mse")
+        accuracy_series = _resolve_accuracy_series(rows)
+        if accuracy_series is not None:
+            xs, ys, label = accuracy_series
+            ax.plot(xs, ys, label=label, linewidth=2.0, color="#2ca02c")
+            plotted = True
+
+        ax.set_title("Full Baseline Training Curve")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Value")
         ax.grid(alpha=0.3)
-        path = curves_dir / f"{base_name}_action_mse_curve.png"
+        ax.set_ylim(bottom=-0.02)
+        handles, labels = ax.get_legend_handles_labels()
+        if plotted and handles:
+            ax.legend(handles, labels, loc="center right", framealpha=0.92)
+        merged_path = curves_dir / f"{base_name}_training_curve.png"
         fig.tight_layout()
-        fig.savefig(path, dpi=180)
+        fig.savefig(merged_path, dpi=180)
         plt.close(fig)
-        saved.append(path)
+        saved.append(merged_path)
+
+        if accuracy_series is not None:
+            xs, ys, label = accuracy_series
+            fig, ax = plt.subplots(figsize=(8.0, 4.6))
+            ax.plot(xs, ys, linewidth=2.0, color="#2ca02c", label=label)
+            ax.set_title("Accuracy Curve")
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel("Value")
+            ax.set_ylim(bottom=0.0)
+            ax.grid(alpha=0.3)
+            ax.legend(loc="best")
+            accuracy_path = curves_dir / f"{base_name}_accuracy_curve.png"
+            fig.tight_layout()
+            fig.savefig(accuracy_path, dpi=180)
+            plt.close(fig)
+            saved.append(accuracy_path)
 
     score_keys = ("train/mean_score", "test/mean_score", "test/contact_rate", "test/mean_min_eef_object_distance")
     if any(any(key in row for key in score_keys) for row in rows):
@@ -619,6 +796,20 @@ def main() -> None:
     output_root = Path(args.output_dir).expanduser().resolve()
     reports_root = Path(args.reports_dir).expanduser().resolve()
     dirs = figure_dirs(reports_root)
+
+    if args.compare_task and args.compare_seed is not None:
+        compare_paths = plot_baseline_vs_attnres(
+            output_root=output_root,
+            reports_root=reports_root,
+            task=args.compare_task,
+            seed=int(args.compare_seed),
+            baseline_exp=str(args.baseline_exp),
+            attnres_exp=str(args.attnres_exp),
+        )
+        print(f"Wrote {len(compare_paths)} comparison figure(s)")
+        for path in compare_paths:
+            print(path)
+        return
 
     tasks = resolve_tasks(args.task)
     seed_filters = set(args.seed) if args.seed else None

@@ -2,10 +2,93 @@ from typing import Union, Optional, Tuple
 import logging
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from diffusion_policy.model.diffusion.positional_embedding import SinusoidalPosEmb
 from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
 
 logger = logging.getLogger(__name__)
+
+
+class RMSNorm(nn.Module):
+    def __init__(self, dim: int, eps: float = 1.0e-6) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        rms = torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+        return x * rms * self.weight
+
+
+class DecoderLayerWithAttnRes(nn.Module):
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        nhead: int,
+        dropout: float,
+        dim_feedforward: int,
+        attn_res_query_init_std: float,
+        attn_res_norm_type: str,
+    ) -> None:
+        super().__init__()
+        if attn_res_norm_type != "rmsnorm":
+            raise ValueError(f"Unsupported attn_res_norm_type={attn_res_norm_type}")
+
+        self.layer = nn.TransformerDecoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.attn_res_norm = RMSNorm(d_model)
+        self.attn_res_query = nn.Parameter(torch.empty(d_model))
+        nn.init.normal_(self.attn_res_query, mean=0.0, std=attn_res_query_init_std)
+
+    def _apply_attn_res(
+        self,
+        x: torch.Tensor,
+        block_cache: list[torch.Tensor],
+        partial_block: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        values = list(block_cache)
+        if partial_block is not None:
+            values.append(partial_block)
+        if not values:
+            return x
+
+        stacked = torch.stack(values, dim=0)  # [N, B, T, D]
+        normed = self.attn_res_norm(stacked)
+        logits = torch.einsum("d,nbtd->nbt", self.attn_res_query, normed)
+        weights = F.softmax(logits, dim=0)
+        aggregated = torch.einsum("nbt,nbtd->btd", weights, stacked)
+        return x + aggregated
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        memory: torch.Tensor,
+        *,
+        tgt_mask: Optional[torch.Tensor],
+        memory_mask: Optional[torch.Tensor],
+        block_cache: list[torch.Tensor],
+        partial_block: Optional[torch.Tensor],
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        x = self._apply_attn_res(x, block_cache, partial_block)
+        out = self.layer(
+            tgt=x,
+            memory=memory,
+            tgt_mask=tgt_mask,
+            memory_mask=memory_mask,
+        )
+        if partial_block is None:
+            new_partial = out
+        else:
+            new_partial = partial_block + out
+        return out, new_partial
 
 class TransformerForDiffusion(ModuleAttrMixin):
     def __init__(self,
@@ -22,7 +105,11 @@ class TransformerForDiffusion(ModuleAttrMixin):
             causal_attn: bool=False,
             time_as_cond: bool=True,
             obs_as_cond: bool=False,
-            n_cond_layers: int = 0
+            n_cond_layers: int = 0,
+            use_attn_res: bool = False,
+            attn_res_block_size: int = 2,
+            attn_res_norm_type: str = "rmsnorm",
+            attn_res_query_init_std: float = 0.02,
         ) -> None:
         super().__init__()
 
@@ -55,6 +142,7 @@ class TransformerForDiffusion(ModuleAttrMixin):
         self.cond_pos_emb = None
         self.encoder = None
         self.decoder = None
+        self.decoder_layers = None
         encoder_only = False
         if T_cond > 0:
             self.cond_pos_emb = nn.Parameter(torch.zeros(1, T_cond, n_emb))
@@ -78,20 +166,32 @@ class TransformerForDiffusion(ModuleAttrMixin):
                     nn.Mish(),
                     nn.Linear(4 * n_emb, n_emb)
                 )
-            # decoder
-            decoder_layer = nn.TransformerDecoderLayer(
-                d_model=n_emb,
-                nhead=n_head,
-                dim_feedforward=4*n_emb,
-                dropout=p_drop_attn,
-                activation='gelu',
-                batch_first=True,
-                norm_first=True # important for stability
-            )
-            self.decoder = nn.TransformerDecoder(
-                decoder_layer=decoder_layer,
-                num_layers=n_layer
-            )
+            if use_attn_res:
+                self.decoder_layers = nn.ModuleList([
+                    DecoderLayerWithAttnRes(
+                        d_model=n_emb,
+                        nhead=n_head,
+                        dropout=p_drop_attn,
+                        dim_feedforward=4 * n_emb,
+                        attn_res_query_init_std=attn_res_query_init_std,
+                        attn_res_norm_type=attn_res_norm_type,
+                    )
+                    for _ in range(n_layer)
+                ])
+            else:
+                decoder_layer = nn.TransformerDecoderLayer(
+                    d_model=n_emb,
+                    nhead=n_head,
+                    dim_feedforward=4*n_emb,
+                    dropout=p_drop_attn,
+                    activation='gelu',
+                    batch_first=True,
+                    norm_first=True # important for stability
+                )
+                self.decoder = nn.TransformerDecoder(
+                    decoder_layer=decoder_layer,
+                    num_layers=n_layer
+                )
         else:
             # encoder only BERT
             encoder_only = True
@@ -147,6 +247,8 @@ class TransformerForDiffusion(ModuleAttrMixin):
         self.time_as_cond = time_as_cond
         self.obs_as_cond = obs_as_cond
         self.encoder_only = encoder_only
+        self.use_attn_res = use_attn_res
+        self.attn_res_block_size = int(attn_res_block_size)
 
         # init
         self.apply(self._init_weights)
@@ -184,6 +286,10 @@ class TransformerForDiffusion(ModuleAttrMixin):
         elif isinstance(module, nn.LayerNorm):
             torch.nn.init.zeros_(module.bias)
             torch.nn.init.ones_(module.weight)
+        elif isinstance(module, RMSNorm):
+            torch.nn.init.ones_(module.weight)
+        elif isinstance(module, DecoderLayerWithAttnRes):
+            pass
         elif isinstance(module, TransformerForDiffusion):
             torch.nn.init.normal_(module.pos_emb, mean=0.0, std=0.02)
             if module.cond_obs_emb is not None:
@@ -206,7 +312,7 @@ class TransformerForDiffusion(ModuleAttrMixin):
         decay = set()
         no_decay = set()
         whitelist_weight_modules = (torch.nn.Linear, torch.nn.MultiheadAttention)
-        blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
+        blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding, RMSNorm)
         for mn, m in self.named_modules():
             for pn, p in m.named_parameters():
                 fpn = "%s.%s" % (mn, pn) if mn else pn  # full param name
@@ -222,6 +328,8 @@ class TransformerForDiffusion(ModuleAttrMixin):
                     decay.add(fpn)
                 elif pn.endswith("weight") and isinstance(m, blacklist_weight_modules):
                     # weights of blacklist modules will NOT be weight decayed
+                    no_decay.add(fpn)
+                elif pn.endswith("attn_res_query"):
                     no_decay.add(fpn)
 
         # special case the position embedding parameter in the root GPT module as not decayed
@@ -329,12 +437,30 @@ class TransformerForDiffusion(ModuleAttrMixin):
             ]  # each position maps to a (learnable) vector
             x = self.drop(token_embeddings + position_embeddings)
             # (B,T,n_emb)
-            x = self.decoder(
-                tgt=x,
-                memory=memory,
-                tgt_mask=self.mask,
-                memory_mask=self.memory_mask
-            )
+            if self.use_attn_res:
+                block_cache: list[torch.Tensor] = []
+                partial_block: Optional[torch.Tensor] = None
+                for layer_idx, layer in enumerate(self.decoder_layers):
+                    x, partial_block = layer(
+                        x,
+                        memory,
+                        tgt_mask=self.mask,
+                        memory_mask=self.memory_mask,
+                        block_cache=block_cache,
+                        partial_block=partial_block,
+                    )
+                    if (layer_idx + 1) % self.attn_res_block_size == 0:
+                        block_cache.append(partial_block)
+                        partial_block = None
+                if partial_block is not None:
+                    block_cache.append(partial_block)
+            else:
+                x = self.decoder(
+                    tgt=x,
+                    memory=memory,
+                    tgt_mask=self.mask,
+                    memory_mask=self.memory_mask
+                )
             # (B,T,n_emb)
         
         # head

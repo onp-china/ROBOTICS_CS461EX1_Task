@@ -3,7 +3,7 @@ defaults:
   - _self_
 
 name: train_diffusion_transformer_mimicgen_d1_mug_cleanup_loc_tuned
-exp_name: "mug_loc_tuned_e200"
+exp_name: "baseline_tuned"
 variant_name: "distance_weighted"
 
 horizon: 24
@@ -14,6 +14,15 @@ policy:
   use_distance_weighted_loss: True
   distance_weight_alpha: 3.0
   distance_weight_sigma: 0.06
+
+task:
+  env_runner:
+    n_test: 12
+    n_test_vis: 1
+    n_envs: 4
+  dataset:
+    near_object_threshold: 0.08
+    near_object_oversample_ratio: 4
 
 dataloader:
   batch_size: 512
@@ -31,17 +40,17 @@ val_dataloader:
 
 training:
   resume: False
-  enable_rollout: False
-  num_epochs: 200
-  rollout_every: 20
-  checkpoint_every: 20
+  enable_rollout: True
+  num_epochs: 100
+  rollout_every: 10
+  checkpoint_every: 10
 
 checkpoint:
   topk:
-    monitor_key: val_loss
+    monitor_key: test_mean_min_eef_object_distance
     mode: min
     k: 5
-    format_str: 'epoch={epoch:04d}-val_loss={val_loss:.6f}.ckpt'
+    format_str: 'epoch={epoch:04d}-test_mean_min_eef_object_distance={test_mean_min_eef_object_distance:.4f}.ckpt'
 
 multi_run:
   run_dir: ${oc.env:MYDIFFUSION_D1_OUTPUTS_DIR,mydiffusion_D1/outputs}/${task.name}/${exp_name}/${variant_name}/${training.seed}

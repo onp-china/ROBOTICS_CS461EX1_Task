@@ -34,7 +34,9 @@ class RobomimicReplayLowdimDataset(BaseLowdimDataset):
             use_legacy_normalizer=False,
             seed=42,
             val_ratio=0.0,
-            max_train_episodes=None
+            max_train_episodes=None,
+            near_object_threshold=None,
+            near_object_oversample_ratio=1
         ):
         obs_keys = list(obs_keys)
         rotation_transformer = RotationTransformer(
@@ -69,6 +71,35 @@ class RobomimicReplayLowdimDataset(BaseLowdimDataset):
             pad_before=pad_before, 
             pad_after=pad_after,
             episode_mask=train_mask)
+
+        if near_object_threshold is not None and near_object_oversample_ratio > 1:
+            threshold = float(near_object_threshold)
+            oversample_ratio = int(near_object_oversample_ratio)
+            if threshold <= 0:
+                raise ValueError("near_object_threshold must be positive when provided.")
+            if oversample_ratio < 1:
+                raise ValueError("near_object_oversample_ratio must be >= 1.")
+
+            base_indices = sampler.indices
+            if len(base_indices) > 0:
+                object_pos = replay_buffer['object_pos']
+                eef_pos = replay_buffer['eef_pos']
+                near_rows = []
+                for row in base_indices:
+                    buffer_start_idx, buffer_end_idx, _, _ = row
+                    dists = np.linalg.norm(
+                        eef_pos[buffer_start_idx:buffer_end_idx] - object_pos[buffer_start_idx:buffer_end_idx],
+                        axis=-1,
+                    )
+                    if dists.size > 0 and float(np.min(dists)) <= threshold:
+                        near_rows.append(row.copy())
+                if near_rows:
+                    repeated = np.repeat(
+                        np.asarray(near_rows, dtype=base_indices.dtype),
+                        oversample_ratio - 1,
+                        axis=0,
+                    )
+                    sampler.indices = np.concatenate([base_indices, repeated], axis=0)
         
         self.replay_buffer = replay_buffer
         self.sampler = sampler
@@ -78,6 +109,8 @@ class RobomimicReplayLowdimDataset(BaseLowdimDataset):
         self.pad_before = pad_before
         self.pad_after = pad_after
         self.use_legacy_normalizer = use_legacy_normalizer
+        self.near_object_threshold = near_object_threshold
+        self.near_object_oversample_ratio = near_object_oversample_ratio
     
     def get_validation_dataset(self):
         val_set = copy.copy(self)
