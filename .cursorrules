@@ -1,0 +1,55 @@
+# Diffusion Policy & MimicGen Training .cursorrules
+
+## 服务器与环境信息 (Server & Environment)
+
+- **服务器地址**: `connect.bjb2.seetacloud.com`
+- **端口**: `53212`
+- **用户**: `root`
+- **密码**: `jjJKJ+3hHEoG` (使用 `sshpass` 自动化)
+- **远程路径**: `/root/autodl-tmp/ROBOTICS_CS461EX1_Task`
+- **本地路径**: `/Users/kiki/Documents/New project`
+- **Conda 环境**: `mujoco` (包含 torch, robomimic, robosuite, pandas 等)
+- **渲染设置**: 服务器端使用 `export MUJOCO_GL=egl` 进行无头渲染
+
+## 开发与训练流程 (Workflow)
+
+1. **代码同步**:
+   - 本地修改代码后，需同步至服务器。使用 `rsync` 同步 `src/` 和 `configs/`。
+2. **训练执行**:
+   - 优先使用本地 Jupyter Notebook (`mimicgen_training.ipynb`) 连接远程 Kernel 运行。
+   - 单元格内使用 `%%bash` 块，并显式激活环境：
+     ```bash
+     %%bash
+     source /root/miniconda3/etc/profile.d/conda.sh && conda activate mujoco
+     export MUJOCO_GL=egl
+     python mydiffusion/train.py ...
+     ```
+3. **结果回传**:
+   - 训练产生的 `outputs/` (MimicGen) 和 `results/` (MuJoCo Push) 需同步回本地。
+   - 使用本地脚本 `./sync_results.sh` 进行一键同步。
+
+## 核心架构规范 (Architecture)
+
+- **模型定义**: 位于 `src/models/`，包括 `BaselineDiffusionTransformerPolicy` 和 `AttnResDiffusionTransformerPolicy`。
+- **配置管理**: 使用 Hydra。任务配置位于 `mydiffusion/config/task/`，模型/工作空间配置位于 `mydiffusion/config/`。
+- **残差注意力 (AttnRes)**: 核心实现在 `mydiffusion/models/attnres_patch.py`，通过修改 Hydra 的 `_target_` 来启用。
+
+## 通用准则 (General Guidelines)
+
+- **语言**: 优先使用中文回答和注释。
+- **文件操作**: 
+  - 在原文件中修改，不要生成新文件。
+  - 除非明确要求，否则不要生成 `.md` 文档。
+  - 测试代码在测试完成后必须删除。
+- **代码风格**: 
+  - Python 代码需使用类型提示 (Type Hints)。
+  - 保持函数简洁 (建议 30 行以内)。
+  - 使用 Google 风格的 docstrings。
+- **硬件/串口**: 修改硬件代码前必须关闭串口监视器（针对嵌入式任务）。
+- **安全性**: 不要随意修改“非嵌入式代码”（如前端、后端、数据库），除非得到明确申请批准。
+
+## 常用指令 (Common Commands)
+
+- **同步结果**: `./sync_results.sh`
+- **检查服务器进程**: `sshpass -p 'jjJKJ+3hHEoG' ssh -p 53212 root@connect.bjb2.seetacloud.com "nvidia-smi; tmux ls"`
+- **清理服务器缓存**: `find . -name "__pycache__" -type d -exec rm -rf {} +`

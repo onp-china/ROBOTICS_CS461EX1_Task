@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+.venv
+venv
+ENV
+.conda-robotics/
+
+# Data and Models (Large files)
+data/
+outputs/
+results/
+remote_results_*/
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.hdf5
+*.npz
+
+# Visuals and Reports (Generated)
+*.mp4
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+report_visuals/
+mujoco_architecture_diagrams/
+
+# IDE and OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project Specific
+sync_results.sh
+# 隐私信息已在 .cursorrules 中，但 .cursorrules 本身建议保留以规范流程
+# 如果需要排除包含密码的脚本，请确保它们在上面已列出
