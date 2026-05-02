@@ -255,16 +255,23 @@ def discover_runs(output_root: Path, task_name: str) -> list[tuple[Path, str, in
         if seed is not None:
             runs.append((child, LEGACY_EXP_NAME, seed))
             continue
-
         exp_name = child.name
-        for seed_dir in sorted(child.iterdir(), key=lambda path: path.name):
-            if not seed_dir.is_dir():
+        for nested_dir in sorted(child.iterdir(), key=lambda path: path.name):
+            if not nested_dir.is_dir():
                 continue
             try:
-                nested_seed = int(seed_dir.name)
+                nested_seed = int(nested_dir.name)
             except ValueError:
+                for variant_seed_dir in sorted(nested_dir.iterdir(), key=lambda path: path.name):
+                    if not variant_seed_dir.is_dir():
+                        continue
+                    try:
+                        variant_seed = int(variant_seed_dir.name)
+                    except ValueError:
+                        continue
+                    runs.append((variant_seed_dir, exp_name, variant_seed))
                 continue
-            runs.append((seed_dir, exp_name, nested_seed))
+            runs.append((nested_dir, exp_name, nested_seed))
     return runs
 
 

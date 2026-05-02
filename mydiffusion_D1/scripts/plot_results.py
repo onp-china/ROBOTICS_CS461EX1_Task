@@ -136,12 +136,37 @@ def discover_runs(output_root: Path, tasks: list[str], seed_filters: set[int] | 
                 continue
 
             exp_name = child.name
-            for seed_dir in sorted(child.iterdir(), key=lambda path: path.name):
-                if not seed_dir.is_dir():
+            for nested_dir in sorted(child.iterdir(), key=lambda path: path.name):
+                if not nested_dir.is_dir():
                     continue
                 try:
-                    nested_seed = int(seed_dir.name)
+                    nested_seed = int(nested_dir.name)
                 except ValueError:
+                    variant_name = nested_dir.name
+                    del variant_name
+                    for variant_seed_dir in sorted(nested_dir.iterdir(), key=lambda path: path.name):
+                        if not variant_seed_dir.is_dir():
+                            continue
+                        try:
+                            variant_seed = int(variant_seed_dir.name)
+                        except ValueError:
+                            continue
+                        if seed_filters is not None and variant_seed not in seed_filters:
+                            continue
+                        runs.append(
+                            {
+                                "task": task_name,
+                                "exp_name": exp_name,
+                                "seed": variant_seed,
+                                "run_dir": variant_seed_dir,
+                                "log_path": variant_seed_dir / "logs.json.txt",
+                                "media_dirs": [
+                                    variant_seed_dir / "media",
+                                    variant_seed_dir / "rollout_export" / "media",
+                                    variant_seed_dir / "best_rollout_export" / "media",
+                                ],
+                            }
+                        )
                     continue
                 if seed_filters is not None and nested_seed not in seed_filters:
                     continue
@@ -150,12 +175,12 @@ def discover_runs(output_root: Path, tasks: list[str], seed_filters: set[int] | 
                         "task": task_name,
                         "exp_name": exp_name,
                         "seed": nested_seed,
-                        "run_dir": seed_dir,
-                        "log_path": seed_dir / "logs.json.txt",
+                        "run_dir": nested_dir,
+                        "log_path": nested_dir / "logs.json.txt",
                         "media_dirs": [
-                            seed_dir / "media",
-                            seed_dir / "rollout_export" / "media",
-                            seed_dir / "best_rollout_export" / "media",
+                            nested_dir / "media",
+                            nested_dir / "rollout_export" / "media",
+                            nested_dir / "best_rollout_export" / "media",
                         ],
                     }
                 )

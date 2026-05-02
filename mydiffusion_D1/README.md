@@ -227,6 +227,9 @@ python mydiffusion_D1/scripts/plot_results.py
   - `train_loss / val_loss`
   - `train_action_mse_error`
   - 如果日志里包含 rollout 分数，也会额外画出 `test/mean_score`
+  - 如果日志里包含 rollout 指标，也会额外生成 `*_accuracy_curve.png`
+    - 优先使用 `test/contact_rate` 作为成功率 / accuracy 曲线
+    - 否则回退到 `test/mean_score` 或 `train/mean_score`
 - 多 seed 聚合图
   - 同一任务的最佳 checkpoint 指标
   - 同一任务的 `final val_loss` 均值与标准差
