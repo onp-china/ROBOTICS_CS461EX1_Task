@@ -29,6 +29,7 @@ data:
   expected_action_rank: 3
 
 model:
+  residual_mode: "standard"
   hidden_dim: 128
   num_layers: 4
   num_heads: 4

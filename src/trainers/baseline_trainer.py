@@ -26,6 +26,7 @@ def build_model(config: Dict) -> BaselineDiffusionTransformerPolicy:
         num_heads=config["model"]["num_heads"],
         dropout=config["model"]["dropout"],
         max_diffusion_step=config["model"]["max_diffusion_step"],
+        residual_mode=config["model"].get("residual_mode", "standard"),
     )
 
 

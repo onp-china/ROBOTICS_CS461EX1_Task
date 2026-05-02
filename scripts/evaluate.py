@@ -40,6 +40,7 @@ def main() -> None:
         num_heads=config["model"]["num_heads"],
         dropout=config["model"]["dropout"],
         max_diffusion_step=config["model"]["max_diffusion_step"],
+        residual_mode=config["model"].get("residual_mode", "standard"),
     ).to(device)
     state_dict = torch.load(args.checkpoint, map_location=device)
     model.load_state_dict(state_dict)

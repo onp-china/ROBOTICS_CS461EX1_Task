@@ -1,7 +1,7 @@
 experiment:
-  name: "mujoco_two_finger_push_smoke"
+  name: "mujoco_push_a3_seq12_stride1_attnres"
   seed: 7
-  output_dir: "results/mujoco_two_finger_push_smoke"
+  output_dir: "results/mujoco_push_a3_seq12_stride1_attnres"
 
 data:
   dataset_type: "demo_npz"
@@ -12,8 +12,8 @@ data:
   obs_key: "observations"
   action_key: "actions"
   action_conditioning: "shifted_history"
-  sequence_length: 8
-  stride: 2
+  sequence_length: 12
+  stride: 1
   obs_dim: 18
   action_dim: 4
   max_diffusion_step: 32
@@ -22,7 +22,7 @@ data:
   control_mode: "joint_position"
 
 model:
-  residual_mode: "standard"
+  residual_mode: "attnres"
   hidden_dim: 128
   num_layers: 4
   num_heads: 4
