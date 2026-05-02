@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 
 MYDIFFUSION_D1_ROOT = Path(__file__).resolve().parents[1]
 if str(MYDIFFUSION_D1_ROOT) not in sys.path:
@@ -253,6 +254,7 @@ def load_or_build_summary(reports_root: Path, runs: list[dict]) -> list[dict]:
             reader = csv.DictReader(handle)
             for row in reader:
                 parsed = dict(row)
+                parsed["exp_name"] = parsed.get("exp_name") or LEGACY_EXP_NAME
                 parsed["seed"] = int(parsed["seed"])
                 for key in (
                     "best_checkpoint_metric_value",
@@ -379,20 +381,54 @@ def plot_baseline_vs_attnres(
     saved: list[Path] = []
 
     # loss comparison
-    fig, ax = plt.subplots(figsize=(8.6, 5.2))
-    for rows, color, linestyle, prefix in (
-        (baseline_rows, "#2563eb", "-", "Baseline"),
-        (attnres_rows, "#ef4444", "--", "AttnRes"),
+    fig, ax = plt.subplots(figsize=(10.2, 6.0))
+    loss_series = []
+    for rows, color, prefix in (
+        (baseline_rows, "#2563eb", "Baseline"),
+        (attnres_rows, "#ef4444", "AttnRes"),
     ):
-        for key, suffix in (("train_loss", "Train Loss"), ("val_loss", "Val Loss")):
+        for key, suffix, linestyle in (
+            ("train_loss", "Train Loss", "-"),
+            ("val_loss", "Val Loss", "--"),
+        ):
             xs, ys = _extract_run_series(rows, key)
             if len(xs) > 0:
                 ax.plot(xs, ys, color=color, linestyle=linestyle, linewidth=2.0, label=f"{prefix} {suffix}")
+                loss_series.append((xs, ys))
     ax.set_title(f"Baseline vs AttnRes - {task} ({seed=}, 100 Epochs)".replace("seed=", "seed "))
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss")
     ax.grid(alpha=0.3)
     ax.legend(loc="best")
+    if loss_series:
+        max_epoch = int(max(float(np.max(xs)) for xs, _ in loss_series))
+        inset_start = max(0, max_epoch - 20)
+        inset = inset_axes(ax, width="38%", height="38%", loc="upper right", borderpad=2.0)
+        min_y = float("inf")
+        max_y = float("-inf")
+        for rows, color, prefix in (
+            (baseline_rows, "#2563eb", "Baseline"),
+            (attnres_rows, "#ef4444", "AttnRes"),
+        ):
+            for key, linestyle in (
+                ("train_loss", "-"),
+                ("val_loss", "--"),
+            ):
+                xs, ys = _extract_run_series(rows, key)
+                if len(xs) > 0:
+                    inset.plot(xs, ys, color=color, linestyle=linestyle, linewidth=1.6)
+                    mask = xs >= inset_start
+                    if np.any(mask):
+                        min_y = min(min_y, float(np.min(ys[mask])))
+                        max_y = max(max_y, float(np.max(ys[mask])))
+        inset.set_xlim(inset_start, max_epoch)
+        if min_y < max_y:
+            pad = max((max_y - min_y) * 0.15, 1e-4)
+            inset.set_ylim(min_y - pad, max_y + pad)
+        inset.set_title("Late Epochs", fontsize=9)
+        inset.grid(alpha=0.25)
+        inset.tick_params(labelsize=8)
+        mark_inset(ax, inset, loc1=2, loc2=4, fc="none", ec="0.5")
     loss_path = curves_dir / f"{task}_seed{seed}_loss_comparison.png"
     fig.tight_layout()
     fig.savefig(loss_path, dpi=180)
@@ -400,19 +436,19 @@ def plot_baseline_vs_attnres(
     saved.append(loss_path)
 
     # mse + accuracy comparison
-    fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.1))
+    fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.3))
     panel_specs = [
         ("train_action_mse_error", "Train MSE", "MSE"),
         ("val_action_mse_error", "Validation MSE", "MSE"),
     ]
     for axis, (metric_key, title, ylabel) in zip(axes[:2], panel_specs):
-        for rows, color, linestyle, prefix in (
-            (baseline_rows, "#2563eb", "-", "Baseline"),
-            (attnres_rows, "#ef4444", "--", "AttnRes"),
+        for rows, color, prefix in (
+            (baseline_rows, "#2563eb", "Baseline"),
+            (attnres_rows, "#ef4444", "AttnRes"),
         ):
             xs, ys = _extract_run_series(rows, metric_key)
             if len(xs) > 0:
-                axis.plot(xs, ys, color=color, linestyle=linestyle, linewidth=2.0, label=prefix)
+                axis.plot(xs, ys, color=color, linestyle="-", linewidth=2.0, label=prefix)
         axis.set_title(title)
         axis.set_xlabel("Epoch")
         axis.set_ylabel(ylabel)
@@ -421,13 +457,13 @@ def plot_baseline_vs_attnres(
 
     acc_axis = axes[2]
     plotted_accuracy = False
-    for rows, color, linestyle, prefix in (
-        (baseline_rows, "#2563eb", "-", "Baseline"),
-        (attnres_rows, "#ef4444", "--", "AttnRes"),
+    for rows, color, prefix in (
+        (baseline_rows, "#2563eb", "Baseline"),
+        (attnres_rows, "#ef4444", "AttnRes"),
     ):
         xs, ys = _extract_run_series(rows, "test/contact_rate")
         if len(xs) > 0:
-            acc_axis.plot(xs, ys, color=color, linestyle=linestyle, linewidth=2.0, label=prefix)
+            acc_axis.plot(xs, ys, color=color, linestyle="-", linewidth=2.0, label=prefix)
             plotted_accuracy = True
     acc_axis.set_title("Validation Success Rate")
     acc_axis.set_xlabel("Epoch")
