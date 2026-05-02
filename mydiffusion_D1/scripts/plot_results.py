@@ -791,7 +791,13 @@ def plot_cross_task_bars(rows: list[dict], aggregates_dir: Path) -> list[Path]:
 
 
 def read_video_frames(video_path: Path) -> list[np.ndarray]:
-    import av
+    try:
+        import av
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Optional dependency `av` is not installed, so rollout contact sheets cannot be generated. "
+            "Install `av` to enable video frame extraction."
+        ) from exc
 
     frames: list[np.ndarray] = []
     with av.open(str(video_path)) as container:
@@ -845,7 +851,11 @@ def plot_contact_sheets(run: dict, contact_dir: Path, max_videos: int, frame_lay
     base_name = f"{task}_{exp_name}_seed{seed}"
     saved: list[Path] = []
     for index, video_path in enumerate(videos[: max(1, max_videos)]):
-        frames = read_video_frames(video_path)
+        try:
+            frames = read_video_frames(video_path)
+        except RuntimeError as exc:
+            print(f"Skipping contact sheets for {video_path}: {exc}")
+            break
         selected = select_fixed4_frames(frames) if frame_layout == "fixed4" else select_fixed4_frames(frames)
         suffix = "" if index == 0 else f"_{index + 1:02d}"
         output_path = contact_dir / f"{base_name}_rollout_contact_sheet{suffix}.png"
