@@ -403,7 +403,15 @@ def plot_baseline_vs_attnres(
     if loss_series:
         max_epoch = int(max(float(np.max(xs)) for xs, _ in loss_series))
         inset_start = max(0, max_epoch - 20)
-        inset = inset_axes(ax, width="38%", height="38%", loc="upper right", borderpad=2.0)
+        inset = inset_axes(
+            ax,
+            width="36%",
+            height="36%",
+            loc="lower left",
+            bbox_to_anchor=(0.56, 0.12, 1, 1),
+            bbox_transform=ax.transAxes,
+            borderpad=0.8,
+        )
         min_y = float("inf")
         max_y = float("-inf")
         for rows, color, prefix in (
@@ -425,10 +433,10 @@ def plot_baseline_vs_attnres(
         if min_y < max_y:
             pad = max((max_y - min_y) * 0.15, 1e-4)
             inset.set_ylim(min_y - pad, max_y + pad)
-        inset.set_title("Late Epochs", fontsize=9)
+        inset.set_title("Late Epochs", fontsize=8)
         inset.grid(alpha=0.25)
-        inset.tick_params(labelsize=8)
-        mark_inset(ax, inset, loc1=2, loc2=4, fc="none", ec="0.5")
+        inset.tick_params(labelsize=7)
+        mark_inset(ax, inset, loc1=1, loc2=3, fc="none", ec="0.5")
     loss_path = curves_dir / f"{task}_seed{seed}_loss_comparison.png"
     fig.tight_layout()
     fig.savefig(loss_path, dpi=180)
