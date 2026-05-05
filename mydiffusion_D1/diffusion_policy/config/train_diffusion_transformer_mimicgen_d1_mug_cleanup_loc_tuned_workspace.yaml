@@ -8,12 +8,16 @@ variant_name: "distance_weighted"
 
 horizon: 24
 n_obs_steps: 4
-n_action_steps: 2
+n_action_steps: 1
 
 policy:
   use_distance_weighted_loss: True
   distance_weight_alpha: 3.0
   distance_weight_sigma: 0.06
+  use_gripper_weighted_loss: True
+  gripper_weight_alpha: 4.0
+  gripper_weight_threshold: 0.03
+  gripper_loss_min_weight: 1.0
 
 task:
   env_runner:
@@ -43,15 +47,15 @@ training:
   resume: False
   enable_rollout: True
   num_epochs: 100
-  rollout_every: 10
-  checkpoint_every: 10
+  rollout_every: 20
+  checkpoint_every: 20
 
 checkpoint:
   topk:
-    monitor_key: test_mean_min_eef_object_distance
-    mode: min
+    monitor_key: test_task_success_rate
+    mode: max
     k: 5
-    format_str: 'epoch={epoch:04d}-test_mean_min_eef_object_distance={test_mean_min_eef_object_distance:.4f}.ckpt'
+    format_str: 'epoch={epoch:04d}-test_task_success_rate={test_task_success_rate:.4f}.ckpt'
 
 multi_run:
   run_dir: ${oc.env:MYDIFFUSION_D1_OUTPUTS_DIR,mydiffusion_D1/outputs}/${task.name}/${exp_name}/${variant_name}/${training.seed}

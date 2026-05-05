@@ -374,8 +374,12 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                         if 'test/mean_score' in step_log else ""
                     )
                     + (
-                        f"test_contact_rate={step_log['test/contact_rate']:.6f} "
-                        if 'test/contact_rate' in step_log else ""
+                        f"test_task_success_rate={step_log['test/task_success_rate']:.6f} "
+                        if 'test/task_success_rate' in step_log else ""
+                    )
+                    + (
+                        f"test_pregrasp_ready_rate={step_log['test/pregrasp_ready_rate']:.6f} "
+                        if 'test/pregrasp_ready_rate' in step_log else ""
                     )
                     + (
                         f"test_mean_min_eef_object_distance={step_log['test/mean_min_eef_object_distance']:.6f} "

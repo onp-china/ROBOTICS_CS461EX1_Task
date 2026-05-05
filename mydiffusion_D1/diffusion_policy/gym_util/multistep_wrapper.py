@@ -88,7 +88,10 @@ class MultiStepWrapper(gym.Wrapper):
         self._rollout_debug_start_object_pos = None
         self._rollout_debug_end_object_pos = None
         self._rollout_debug_min_distance = float("inf")
-        self._rollout_contact_threshold = 0.06
+        self._rollout_debug_task_success = False
+        self._rollout_debug_ready_to_grasp = False
+        self._rollout_pregrasp_distance_threshold = 0.03
+        self._rollout_pregrasp_gripper_open_threshold = 0.02
     
     def reset(self):
         """Resets the environment using kwargs."""
@@ -101,6 +104,8 @@ class MultiStepWrapper(gym.Wrapper):
         self._rollout_debug_start_object_pos = None
         self._rollout_debug_end_object_pos = None
         self._rollout_debug_min_distance = float("inf")
+        self._rollout_debug_task_success = False
+        self._rollout_debug_ready_to_grasp = False
         self._update_rollout_debug_metrics()
 
         obs = self._get_obs(self.n_obs_steps)
@@ -173,20 +178,30 @@ class MultiStepWrapper(gym.Wrapper):
     def get_rollout_debug_metrics(self):
         min_distance = self._rollout_debug_min_distance
         displacement = self._compute_object_displacement()
-        contact_happened = (min_distance <= self._rollout_contact_threshold) if np.isfinite(min_distance) else False
         return {
             "min_eef_object_distance": float(min_distance) if np.isfinite(min_distance) else float("nan"),
             "object_displacement": float(displacement) if displacement is not None else 0.0,
-            "contact_happened": bool(contact_happened),
+            "task_success": bool(self._rollout_debug_task_success),
+            "ready_to_grasp": bool(self._rollout_debug_ready_to_grasp),
         }
 
     def _unwrap_lowdim_env(self):
         env = self.env
         while hasattr(env, "env"):
-            if hasattr(env, "get_eef_position") and hasattr(env, "get_object_position"):
+            if (
+                hasattr(env, "get_eef_position")
+                and hasattr(env, "get_object_position")
+                and hasattr(env, "get_gripper_openness")
+                and hasattr(env, "is_task_success")
+            ):
                 return env
             env = env.env
-        if hasattr(env, "get_eef_position") and hasattr(env, "get_object_position"):
+        if (
+            hasattr(env, "get_eef_position")
+            and hasattr(env, "get_object_position")
+            and hasattr(env, "get_gripper_openness")
+            and hasattr(env, "is_task_success")
+        ):
             return env
         return None
 
@@ -196,11 +211,15 @@ class MultiStepWrapper(gym.Wrapper):
             return
         eef_pos = env.get_eef_position()
         object_pos = env.get_object_position()
+        gripper_openness = env.get_gripper_openness()
+        task_success = env.is_task_success()
         if object_pos is not None:
             object_pos = np.asarray(object_pos, dtype=np.float32).reshape(-1)
             if self._rollout_debug_start_object_pos is None:
                 self._rollout_debug_start_object_pos = object_pos.copy()
             self._rollout_debug_end_object_pos = object_pos.copy()
+        if task_success is not None:
+            self._rollout_debug_task_success = self._rollout_debug_task_success or bool(task_success)
         if eef_pos is None or object_pos is None:
             return
         eef_pos = np.asarray(eef_pos, dtype=np.float32).reshape(-1)
@@ -208,6 +227,12 @@ class MultiStepWrapper(gym.Wrapper):
             return
         distance = float(np.linalg.norm(eef_pos[:3] - object_pos[:3]))
         self._rollout_debug_min_distance = min(self._rollout_debug_min_distance, distance)
+        if gripper_openness is not None:
+            ready = (
+                distance <= self._rollout_pregrasp_distance_threshold
+                and float(gripper_openness) >= self._rollout_pregrasp_gripper_open_threshold
+            )
+            self._rollout_debug_ready_to_grasp = self._rollout_debug_ready_to_grasp or bool(ready)
 
     def _compute_object_displacement(self):
         if self._rollout_debug_start_object_pos is None or self._rollout_debug_end_object_pos is None:

@@ -199,7 +199,8 @@ def summarize_run(run_dir: Path, task_name: str, exp_name: str, seed: int) -> di
     best_test_mean_score = None
     final_test_mean_score = None
     final_val_loss = None
-    best_test_contact_rate = None
+    best_test_task_success_rate = None
+    best_test_pregrasp_ready_rate = None
     best_test_mean_min_eef_object_distance = None
     for row in rows:
         if "test/mean_score" in row:
@@ -208,10 +209,29 @@ def summarize_run(run_dir: Path, task_name: str, exp_name: str, seed: int) -> di
             best_test_mean_score = score if best_test_mean_score is None else max(best_test_mean_score, score)
         if "val_loss" in row:
             final_val_loss = float(row["val_loss"])
-        if "test/contact_rate" in row:
-            contact_rate = float(row["test/contact_rate"])
-            best_test_contact_rate = (
-                contact_rate if best_test_contact_rate is None else max(best_test_contact_rate, contact_rate)
+        success_value = row.get("test/task_success_rate")
+        if success_value is not None:
+            success_rate = float(success_value)
+            best_test_task_success_rate = (
+                success_rate
+                if best_test_task_success_rate is None
+                else max(best_test_task_success_rate, success_rate)
+            )
+        legacy_contact_value = row.get("test/contact_rate")
+        if success_value is None and legacy_contact_value is not None:
+            legacy_contact = float(legacy_contact_value)
+            best_test_task_success_rate = (
+                legacy_contact
+                if best_test_task_success_rate is None
+                else max(best_test_task_success_rate, legacy_contact)
+            )
+        ready_value = row.get("test/pregrasp_ready_rate")
+        if ready_value is not None:
+            ready_rate = float(ready_value)
+            best_test_pregrasp_ready_rate = (
+                ready_rate
+                if best_test_pregrasp_ready_rate is None
+                else max(best_test_pregrasp_ready_rate, ready_rate)
             )
         if "test/mean_min_eef_object_distance" in row:
             distance = float(row["test/mean_min_eef_object_distance"])
@@ -243,7 +263,8 @@ def summarize_run(run_dir: Path, task_name: str, exp_name: str, seed: int) -> di
         "best_test_mean_score": best_test_mean_score,
         "final_test_mean_score": final_test_mean_score,
         "final_val_loss": final_val_loss,
-        "best_test_contact_rate": best_test_contact_rate,
+        "best_test_task_success_rate": best_test_task_success_rate,
+        "best_test_pregrasp_ready_rate": best_test_pregrasp_ready_rate,
         "best_test_mean_min_eef_object_distance": best_test_mean_min_eef_object_distance,
     }
 
@@ -260,7 +281,8 @@ def save_summary_csv(rows: list[dict], reports_root: Path) -> Path:
         "best_test_mean_score",
         "final_test_mean_score",
         "final_val_loss",
-        "best_test_contact_rate",
+        "best_test_task_success_rate",
+        "best_test_pregrasp_ready_rate",
         "best_test_mean_min_eef_object_distance",
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -286,7 +308,8 @@ def load_or_build_summary(reports_root: Path, runs: list[dict]) -> list[dict]:
                     "best_test_mean_score",
                     "final_test_mean_score",
                     "final_val_loss",
-                    "best_test_contact_rate",
+                    "best_test_task_success_rate",
+                    "best_test_pregrasp_ready_rate",
                     "best_test_mean_min_eef_object_distance",
                 ):
                     value = parsed.get(key)
@@ -334,7 +357,9 @@ def _metric_title(metric_name: str | None) -> str:
 
 def _resolve_accuracy_series(rows: list[dict]) -> tuple[np.ndarray, np.ndarray, str] | None:
     for key, label in (
-        ("test/contact_rate", "val_success_rate"),
+        ("test/task_success_rate", "task_success_rate"),
+        ("test/pregrasp_ready_rate", "pregrasp_ready_rate"),
+        ("test/contact_rate", "legacy_contact_rate"),
         ("test/mean_score", "val_accuracy"),
         ("train/mean_score", "train_accuracy"),
     ):
@@ -494,11 +519,13 @@ def plot_baseline_vs_attnres(
         (baseline_rows, "#2563eb", "Baseline"),
         (attnres_rows, "#ef4444", "AttnRes"),
     ):
-        xs, ys = _extract_run_series(rows, "test/contact_rate")
+        xs, ys = _extract_run_series(rows, "test/task_success_rate")
+        if len(xs) == 0:
+            xs, ys = _extract_run_series(rows, "test/contact_rate")
         if len(xs) > 0:
             acc_axis.plot(xs, ys, color=color, linestyle="-", linewidth=2.0, label=prefix)
             plotted_accuracy = True
-    acc_axis.set_title("Validation Success Rate")
+    acc_axis.set_title("Task Success Rate")
     acc_axis.set_xlabel("Epoch")
     acc_axis.set_ylabel("Success Rate")
     acc_axis.set_ylim(0.0, 1.05)
@@ -595,13 +622,22 @@ def plot_run_curves(run: dict, curves_dir: Path) -> list[Path]:
             plt.close(fig)
             saved.append(accuracy_path)
 
-    score_keys = ("train/mean_score", "test/mean_score", "test/contact_rate", "test/mean_min_eef_object_distance")
+    score_keys = (
+        "train/mean_score",
+        "test/mean_score",
+        "test/task_success_rate",
+        "test/pregrasp_ready_rate",
+        "test/contact_rate",
+        "test/mean_min_eef_object_distance",
+    )
     if any(any(key in row for key in score_keys) for row in rows):
         fig, ax = plt.subplots(figsize=(8, 4.5))
         for key, label in (
             ("train/mean_score", "Train Mean Score"),
             ("test/mean_score", "Test Mean Score"),
-            ("test/contact_rate", "Test Contact Rate"),
+            ("test/task_success_rate", "Task Success Rate"),
+            ("test/pregrasp_ready_rate", "Pregrasp Ready Rate"),
+            ("test/contact_rate", "Legacy Contact Rate"),
         ):
             xs, ys = _extract_series(rows, key)
             if len(xs) > 0:

@@ -75,6 +75,37 @@ class RobomimicLowdimWrapper(gym.Env):
             return None
         return value[:3]
 
+    def get_gripper_openness(self):
+        raw_obs = self.get_raw_observation()
+        value = raw_obs.get("robot0_gripper_qpos")
+        if value is None:
+            return None
+        value = np.asarray(value, dtype=np.float32).reshape(-1)
+        if value.shape[0] == 0:
+            return None
+        return float(np.mean(value))
+
+    def is_task_success(self):
+        candidates = [
+            getattr(self.env, "is_success", None),
+            getattr(self.env, "_check_success", None),
+            getattr(self.env, "check_success", None),
+        ]
+        for candidate in candidates:
+            if callable(candidate):
+                try:
+                    result = candidate()
+                except TypeError:
+                    continue
+                if isinstance(result, dict):
+                    for key in ("task", "success", "is_success"):
+                        value = result.get(key)
+                        if value is not None:
+                            return bool(value)
+                if result is not None:
+                    return bool(result)
+        return None
+
     def seed(self, seed=None):
         np.random.seed(seed=seed)
         self._seed = seed

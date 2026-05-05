@@ -395,7 +395,8 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
 
         # log
         max_rewards = collections.defaultdict(list)
-        contact_rates = collections.defaultdict(list)
+        task_success_rates = collections.defaultdict(list)
+        pregrasp_ready_rates = collections.defaultdict(list)
         min_distances = collections.defaultdict(list)
         object_displacements = collections.defaultdict(list)
         log_data = dict()
@@ -416,13 +417,16 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
 
             debug_metrics = env.call('get_rollout_debug_metrics')[i]
             if isinstance(debug_metrics, dict):
-                contact_happened = float(bool(debug_metrics.get('contact_happened', False)))
+                task_success = float(bool(debug_metrics.get('task_success', False)))
+                pregrasp_ready = float(bool(debug_metrics.get('ready_to_grasp', False)))
                 min_distance = float(debug_metrics.get('min_eef_object_distance', float('nan')))
                 displacement = float(debug_metrics.get('object_displacement', 0.0))
-                contact_rates[prefix].append(contact_happened)
+                task_success_rates[prefix].append(task_success)
+                pregrasp_ready_rates[prefix].append(pregrasp_ready)
                 min_distances[prefix].append(min_distance)
                 object_displacements[prefix].append(displacement)
-                log_data[prefix+f'contact_happened_{seed}'] = contact_happened
+                log_data[prefix+f'task_success_{seed}'] = task_success
+                log_data[prefix+f'ready_to_grasp_{seed}'] = pregrasp_ready
                 log_data[prefix+f'min_eef_object_distance_{seed}'] = min_distance
                 log_data[prefix+f'object_displacement_{seed}'] = displacement
 
@@ -437,8 +441,10 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
             name = prefix+'mean_score'
             value = np.mean(value)
             log_data[name] = value
-        for prefix, value in contact_rates.items():
-            log_data[prefix+'contact_rate'] = float(np.mean(value)) if value else 0.0
+        for prefix, value in task_success_rates.items():
+            log_data[prefix+'task_success_rate'] = float(np.mean(value)) if value else 0.0
+        for prefix, value in pregrasp_ready_rates.items():
+            log_data[prefix+'pregrasp_ready_rate'] = float(np.mean(value)) if value else 0.0
         for prefix, value in min_distances.items():
             clean = [float(v) for v in value if np.isfinite(v)]
             log_data[prefix+'mean_min_eef_object_distance'] = float(np.mean(clean)) if clean else float('nan')

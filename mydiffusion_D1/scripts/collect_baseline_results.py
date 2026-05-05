@@ -82,7 +82,8 @@ def summarize_run(run_dir: Path, task_name: str, exp_name: str, seed: int) -> di
     best_test_mean_score = None
     final_test_mean_score = None
     final_val_loss = None
-    best_test_contact_rate = None
+    best_test_task_success_rate = None
+    best_test_pregrasp_ready_rate = None
     best_test_mean_min_eef_object_distance = None
     for row in rows:
         if "test/mean_score" in row:
@@ -91,10 +92,29 @@ def summarize_run(run_dir: Path, task_name: str, exp_name: str, seed: int) -> di
             best_test_mean_score = score if best_test_mean_score is None else max(best_test_mean_score, score)
         if "val_loss" in row:
             final_val_loss = float(row["val_loss"])
-        if "test/contact_rate" in row:
-            contact_rate = float(row["test/contact_rate"])
-            best_test_contact_rate = (
-                contact_rate if best_test_contact_rate is None else max(best_test_contact_rate, contact_rate)
+        success_value = row.get("test/task_success_rate")
+        if success_value is not None:
+            success_rate = float(success_value)
+            best_test_task_success_rate = (
+                success_rate
+                if best_test_task_success_rate is None
+                else max(best_test_task_success_rate, success_rate)
+            )
+        legacy_contact = row.get("test/contact_rate")
+        if success_value is None and legacy_contact is not None:
+            legacy_contact_rate = float(legacy_contact)
+            best_test_task_success_rate = (
+                legacy_contact_rate
+                if best_test_task_success_rate is None
+                else max(best_test_task_success_rate, legacy_contact_rate)
+            )
+        ready_value = row.get("test/pregrasp_ready_rate")
+        if ready_value is not None:
+            ready_rate = float(ready_value)
+            best_test_pregrasp_ready_rate = (
+                ready_rate
+                if best_test_pregrasp_ready_rate is None
+                else max(best_test_pregrasp_ready_rate, ready_rate)
             )
         if "test/mean_min_eef_object_distance" in row:
             distance = float(row["test/mean_min_eef_object_distance"])
@@ -131,7 +151,8 @@ def summarize_run(run_dir: Path, task_name: str, exp_name: str, seed: int) -> di
         "best_test_mean_score": best_test_mean_score,
         "final_test_mean_score": final_test_mean_score,
         "final_val_loss": final_val_loss,
-        "best_test_contact_rate": best_test_contact_rate,
+        "best_test_task_success_rate": best_test_task_success_rate,
+        "best_test_pregrasp_ready_rate": best_test_pregrasp_ready_rate,
         "best_test_mean_min_eef_object_distance": best_test_mean_min_eef_object_distance,
     }
 
@@ -149,7 +170,8 @@ def write_csv(rows: list[dict], path: Path) -> None:
         "best_test_mean_score",
         "final_test_mean_score",
         "final_val_loss",
-        "best_test_contact_rate",
+        "best_test_task_success_rate",
+        "best_test_pregrasp_ready_rate",
         "best_test_mean_min_eef_object_distance",
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -172,12 +194,12 @@ def write_markdown(rows: list[dict], path: Path) -> None:
         "",
         "## Per-run",
         "",
-        "| task | exp_name | seed | best checkpoint | best checkpoint metric | best `test/mean_score` | best `test/contact_rate` | best `test/mean_min_eef_object_distance` | final `test/mean_score` | final `val_loss` |",
+        "| task | exp_name | seed | best checkpoint | best checkpoint metric | best `test/mean_score` | best `test/task_success_rate` | best `test/pregrasp_ready_rate` | best `test/mean_min_eef_object_distance` | final `test/mean_score` | final `val_loss` |",
         "| --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
-            "| {task} | {exp_name} | {seed} | {best_checkpoint} | {best_checkpoint_metric} | {best_test_mean_score} | {best_test_contact_rate} | {best_test_mean_min_eef_object_distance} | {final_test_mean_score} | {final_val_loss} |".format(
+            "| {task} | {exp_name} | {seed} | {best_checkpoint} | {best_checkpoint_metric} | {best_test_mean_score} | {best_test_task_success_rate} | {best_test_pregrasp_ready_rate} | {best_test_mean_min_eef_object_distance} | {final_test_mean_score} | {final_val_loss} |".format(
                 task=row["task"],
                 exp_name=row["exp_name"],
                 seed=row["seed"],
@@ -187,7 +209,8 @@ def write_markdown(rows: list[dict], path: Path) -> None:
                     row.get("best_checkpoint_metric_value"),
                 ),
                 best_test_mean_score=format_optional(row["best_test_mean_score"]),
-                best_test_contact_rate=format_optional(row["best_test_contact_rate"]),
+                best_test_task_success_rate=format_optional(row["best_test_task_success_rate"]),
+                best_test_pregrasp_ready_rate=format_optional(row["best_test_pregrasp_ready_rate"]),
                 best_test_mean_min_eef_object_distance=format_optional(row["best_test_mean_min_eef_object_distance"]),
                 final_test_mean_score=format_optional(row["final_test_mean_score"]),
                 final_val_loss=format_optional(row["final_val_loss"]),
@@ -205,7 +228,16 @@ def write_markdown(rows: list[dict], path: Path) -> None:
             if seeds != [42, 43, 44]:
                 continue
             scores = [row["best_test_mean_score"] for row in exp_rows if row["best_test_mean_score"] is not None]
-            contacts = [row["best_test_contact_rate"] for row in exp_rows if row["best_test_contact_rate"] is not None]
+            successes = [
+                row["best_test_task_success_rate"]
+                for row in exp_rows
+                if row["best_test_task_success_rate"] is not None
+            ]
+            pregrasps = [
+                row["best_test_pregrasp_ready_rate"]
+                for row in exp_rows
+                if row["best_test_pregrasp_ready_rate"] is not None
+            ]
             distances = [
                 row["best_test_mean_min_eef_object_distance"]
                 for row in exp_rows
@@ -213,11 +245,12 @@ def write_markdown(rows: list[dict], path: Path) -> None:
             ]
             val_losses = [row["final_val_loss"] for row in exp_rows if row["final_val_loss"] is not None]
             aggregate_lines.append(
-                "| {task} | {exp_name} | {score_mean} | {contact_mean} | {distance_mean} | {val_mean} |".format(
+                "| {task} | {exp_name} | {score_mean} | {success_mean} | {pregrasp_mean} | {distance_mean} | {val_mean} |".format(
                     task=task_name,
                     exp_name=exp_name,
                     score_mean=f"{mean(scores):.6f}" if scores else "-",
-                    contact_mean=f"{mean(contacts):.6f}" if contacts else "-",
+                    success_mean=f"{mean(successes):.6f}" if successes else "-",
+                    pregrasp_mean=f"{mean(pregrasps):.6f}" if pregrasps else "-",
                     distance_mean=f"{mean(distances):.6f}" if distances else "-",
                     val_mean=f"{mean(val_losses):.6f}" if len(val_losses) == 3 else "-",
                 )
@@ -229,8 +262,8 @@ def write_markdown(rows: list[dict], path: Path) -> None:
                 "",
                 "## Three-seed aggregate",
                 "",
-                "| task | exp_name | mean best `test/mean_score` | mean best `test/contact_rate` | mean best `test/mean_min_eef_object_distance` | mean final `val_loss` |",
-                "| --- | --- | ---: | ---: | ---: | ---: |",
+                "| task | exp_name | mean best `test/mean_score` | mean best `test/task_success_rate` | mean best `test/pregrasp_ready_rate` | mean best `test/mean_min_eef_object_distance` | mean final `val_loss` |",
+                "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
                 *aggregate_lines,
             ]
         )

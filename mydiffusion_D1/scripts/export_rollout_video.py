@@ -78,6 +78,8 @@ def resolve_best_checkpoint_from_run_dir(run_dir: str | Path) -> Path:
         rollout_rows = [
             row for row in rows
             if "epoch" in row and any(key in row for key in (
+                "test/task_success_rate",
+                "test/pregrasp_ready_rate",
                 "test/contact_rate",
                 "test/mean_min_eef_object_distance",
                 "test/mean_object_displacement",
@@ -88,7 +90,8 @@ def resolve_best_checkpoint_from_run_dir(run_dir: str | Path) -> Path:
             best_row = max(
                 rollout_rows,
                 key=lambda row: (
-                    float(row.get("test/contact_rate", 0.0)),
+                    float(row.get("test/task_success_rate", row.get("test/contact_rate", 0.0))),
+                    float(row.get("test/pregrasp_ready_rate", 0.0)),
                     -float(row.get("test/mean_min_eef_object_distance", float("inf"))),
                     float(row.get("test/mean_object_displacement", 0.0)),
                     float(row.get("test/mean_score", 0.0)),

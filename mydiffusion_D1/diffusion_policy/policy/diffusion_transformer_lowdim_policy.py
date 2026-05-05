@@ -25,6 +25,10 @@ class DiffusionTransformerLowdimPolicy(BaseLowdimPolicy):
             use_distance_weighted_loss=False,
             distance_weight_alpha=3.0,
             distance_weight_sigma=0.06,
+            use_gripper_weighted_loss=False,
+            gripper_weight_alpha=4.0,
+            gripper_weight_threshold=0.03,
+            gripper_loss_min_weight=1.0,
             # parameters passed to step
             **kwargs):
         super().__init__()
@@ -51,6 +55,10 @@ class DiffusionTransformerLowdimPolicy(BaseLowdimPolicy):
         self.use_distance_weighted_loss = use_distance_weighted_loss
         self.distance_weight_alpha = float(distance_weight_alpha)
         self.distance_weight_sigma = float(distance_weight_sigma)
+        self.use_gripper_weighted_loss = bool(use_gripper_weighted_loss)
+        self.gripper_weight_alpha = float(gripper_weight_alpha)
+        self.gripper_weight_threshold = float(gripper_weight_threshold)
+        self.gripper_loss_min_weight = float(gripper_loss_min_weight)
         self.kwargs = kwargs
 
         if num_inference_steps is None:
@@ -236,9 +244,31 @@ class DiffusionTransformerLowdimPolicy(BaseLowdimPolicy):
         else:
             raise ValueError(f"Unsupported prediction type {pred_type}")
 
-        loss = F.mse_loss(pred, target, reduction='none')
-        loss = loss * loss_mask.type(loss.dtype)
-        loss = reduce(loss, 'b t d -> b t', 'mean')
+        per_dim_loss = F.mse_loss(pred, target, reduction='none')
+        per_dim_loss = per_dim_loss * loss_mask.type(per_dim_loss.dtype)
+
+        if self.use_gripper_weighted_loss:
+            assert 'eef_pos' in batch and 'object_pos' in batch, (
+                "Gripper-weighted loss requires `eef_pos` and `object_pos` in the batch."
+            )
+            eef_pos = batch['eef_pos'].to(per_dim_loss.device, non_blocking=True).float()
+            object_pos = batch['object_pos'].to(per_dim_loss.device, non_blocking=True).float()
+            if self.pred_action_steps_only:
+                To = self.n_obs_steps
+                start = To - 1
+                end = start + self.n_action_steps
+                eef_pos = eef_pos[:, start:end]
+                object_pos = object_pos[:, start:end]
+            dist = torch.linalg.norm(eef_pos - object_pos, dim=-1, keepdim=True)
+            near_mask = (dist <= self.gripper_weight_threshold).type(per_dim_loss.dtype)
+            gripper_weights = torch.ones_like(per_dim_loss)
+            gripper_dim = self.action_dim - 1
+            gripper_weights[..., gripper_dim:gripper_dim+1] = (
+                self.gripper_loss_min_weight + self.gripper_weight_alpha * near_mask
+            )
+            per_dim_loss = per_dim_loss * gripper_weights
+
+        loss = reduce(per_dim_loss, 'b t d -> b t', 'mean')
 
         if self.use_distance_weighted_loss:
             assert 'eef_pos' in batch and 'object_pos' in batch, (
