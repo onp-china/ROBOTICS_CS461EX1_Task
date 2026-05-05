@@ -34,8 +34,7 @@ MYDIFFUSION_D1_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(MYDIFFUSION_D1_ROOT) not in sys.path:
     sys.path.insert(0, str(MYDIFFUSION_D1_ROOT))
 
-from _runtime import read_json_lines
-from scripts.export_rollout_video import export_rollout_video_for_checkpoint
+from scripts.export_rollout_video import export_rollout_video_for_checkpoint, resolve_best_checkpoint_from_run_dir
 from scripts.plot_results import plot_single_run_curves_for_dir
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
@@ -68,72 +67,12 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
         self.epoch = 0
 
     def _resolve_best_checkpoint_path(self) -> pathlib.Path | None:
-        checkpoint_dir = pathlib.Path(self.output_dir) / "checkpoints"
-        if not checkpoint_dir.is_dir():
-            return None
-
-        rollout_checkpoint = self._resolve_best_rollout_checkpoint_path(checkpoint_dir)
-        if rollout_checkpoint is not None:
-            return rollout_checkpoint
-
-        monitor_key = str(self.cfg.checkpoint.topk.monitor_key)
-        mode = str(self.cfg.checkpoint.topk.mode)
-        candidates = []
-        for ckpt_path in checkpoint_dir.glob("*.ckpt"):
-            if ckpt_path.name == "latest.ckpt":
-                continue
-            stem = ckpt_path.stem
-            marker = f"{monitor_key}="
-            if marker not in stem:
-                continue
-            try:
-                raw_value = stem.split(marker, 1)[1].split("-", 1)[0]
-                metric_value = float(raw_value)
-            except ValueError:
-                continue
-            candidates.append((metric_value, ckpt_path))
-
-        if not candidates:
+        try:
+            return resolve_best_checkpoint_from_run_dir(self.output_dir)
+        except Exception:
+            checkpoint_dir = pathlib.Path(self.output_dir) / "checkpoints"
             latest_path = checkpoint_dir / "latest.ckpt"
             return latest_path if latest_path.is_file() else None
-
-        if mode == "max":
-            return max(candidates, key=lambda item: item[0])[1]
-        return min(candidates, key=lambda item: item[0])[1]
-
-    def _resolve_best_rollout_checkpoint_path(self, checkpoint_dir: pathlib.Path) -> pathlib.Path | None:
-        log_path = pathlib.Path(self.output_dir) / "logs.json.txt"
-        rows = read_json_lines(log_path)
-        if not rows:
-            return None
-
-        rollout_rows = [row for row in rows if "epoch" in row and any(key in row for key in (
-            "test/contact_rate",
-            "test/mean_min_eef_object_distance",
-            "test/mean_object_displacement",
-            "test/mean_score",
-        ))]
-        if not rollout_rows:
-            return None
-
-        best_row = max(
-            rollout_rows,
-            key=lambda row: (
-                float(row.get("test/contact_rate", 0.0)),
-                -float(row.get("test/mean_min_eef_object_distance", float("inf"))),
-                float(row.get("test/mean_object_displacement", 0.0)),
-                float(row.get("test/mean_score", 0.0)),
-                -float(row.get("val_loss", float("inf"))),
-                int(row.get("epoch", -1)),
-            ),
-        )
-        epoch = int(best_row.get("epoch", -1))
-        if epoch < 0:
-            return None
-
-        for ckpt_path in checkpoint_dir.glob(f"epoch={epoch:04d}-*.ckpt"):
-            return ckpt_path
-        return None
 
     def _maybe_export_best_rollout_video(self) -> None:
         if not bool(getattr(self.cfg.training, "auto_export_best_rollout_video", False)):
@@ -179,6 +118,7 @@ class TrainDiffusionTransformerLowdimWorkspace(BaseWorkspace):
                 task=str(self.cfg.task.name),
                 seed=int(self.cfg.training.seed),
                 curves_dir=curves_dir,
+                exp_name=str(getattr(self.cfg, "exp_name", "baseline")),
             )
             if saved:
                 print("Training curves exported: " + ", ".join(str(path) for path in saved))

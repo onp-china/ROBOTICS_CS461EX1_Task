@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -13,13 +14,17 @@ MYDIFFUSION_D1_ROOT = Path(__file__).resolve().parents[1]
 if str(MYDIFFUSION_D1_ROOT) not in sys.path:
     sys.path.insert(0, str(MYDIFFUSION_D1_ROOT))
 
-from _runtime import add_repo_paths, fail, register_mimicgen_environments, require_modules
+from _runtime import add_repo_paths, fail, read_json_lines, register_mimicgen_environments, require_modules
+
+
+CHECKPOINT_RE = re.compile(r"epoch=(?P<epoch>\d+)-(?P<metric>[A-Za-z0-9_]+)=(?P<value>-?\d+(?:\.\d+)?)\.ckpt$")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Export a lightweight rollout video for a trained mydiffusion_D1 task.")
     parser.add_argument("--task", required=True, help="Task config name, e.g. mug_cleanup_d1_lowdim_abs.")
-    parser.add_argument("--checkpoint", required=True, help="Checkpoint path, usually checkpoints/latest.ckpt.")
+    parser.add_argument("--checkpoint", default=None, help="Checkpoint path, usually checkpoints/latest.ckpt.")
+    parser.add_argument("--run-dir", default=None, help="Run directory used to auto-resolve the best checkpoint.")
     parser.add_argument("--output-dir", default=None, help="Directory to store rollout artifacts.")
     parser.add_argument("--output-video", default=None, help="Optional explicit mp4 output path.")
     parser.add_argument("--seed", type=int, default=100000, help="Test rollout seed.")
@@ -52,6 +57,72 @@ def _extract_first_mean_score(log_data: dict) -> float | None:
         if value is not None:
             return float(value)
     return None
+
+
+def _parse_checkpoint_name(checkpoint_name: str) -> tuple[int, str, float] | None:
+    match = CHECKPOINT_RE.match(checkpoint_name)
+    if not match:
+        return None
+    return int(match.group("epoch")), str(match.group("metric")), float(match.group("value"))
+
+
+def resolve_best_checkpoint_from_run_dir(run_dir: str | Path) -> Path:
+    run_dir = Path(run_dir).expanduser().resolve()
+    checkpoints_dir = run_dir / "checkpoints"
+    if not checkpoints_dir.is_dir():
+        fail(f"Missing checkpoints directory: {checkpoints_dir}")
+
+    log_path = run_dir / "logs.json.txt"
+    rows = read_json_lines(log_path)
+    if rows:
+        rollout_rows = [
+            row for row in rows
+            if "epoch" in row and any(key in row for key in (
+                "test/contact_rate",
+                "test/mean_min_eef_object_distance",
+                "test/mean_object_displacement",
+                "test/mean_score",
+            ))
+        ]
+        if rollout_rows:
+            best_row = max(
+                rollout_rows,
+                key=lambda row: (
+                    float(row.get("test/contact_rate", 0.0)),
+                    -float(row.get("test/mean_min_eef_object_distance", float("inf"))),
+                    float(row.get("test/mean_object_displacement", 0.0)),
+                    float(row.get("test/mean_score", 0.0)),
+                    -float(row.get("val_loss", float("inf"))),
+                    int(row.get("epoch", -1)),
+                ),
+            )
+            best_epoch = int(best_row.get("epoch", -1))
+            for ckpt_path in sorted(checkpoints_dir.glob(f"epoch={best_epoch:04d}-*.ckpt")):
+                return ckpt_path
+
+    candidates = []
+    for ckpt_path in sorted(checkpoints_dir.glob("epoch=*-*.ckpt")):
+        parsed = _parse_checkpoint_name(ckpt_path.name)
+        if parsed is None:
+            continue
+        epoch, metric_name, metric_value = parsed
+        candidates.append((metric_name, metric_value, epoch, ckpt_path))
+    if candidates:
+        def score(item):
+            metric_name, metric_value, epoch, _ = item
+            if metric_name == "test_mean_min_eef_object_distance":
+                return (3, -metric_value, epoch)
+            if metric_name == "test_mean_score":
+                return (2, metric_value, epoch)
+            if metric_name == "val_loss":
+                return (1, -metric_value, epoch)
+            return (0, float("-inf"), epoch)
+        return max(candidates, key=score)[3]
+
+    latest = checkpoints_dir / "latest.ckpt"
+    if latest.is_file():
+        return latest
+    fail(f"No checkpoint found under: {checkpoints_dir}")
 
 
 def export_rollout_video_for_checkpoint(
@@ -112,6 +183,7 @@ def export_rollout_video_for_checkpoint(
     runner_cfg.n_test_vis = min(int(n_test), 1)
     runner_cfg.test_start_seed = int(seed)
     runner_cfg.n_envs = int(n_envs)
+    runner_cfg.enable_render = True
 
     media_dir = resolved_output_dir / "media"
     before_media = _collect_media_paths(media_dir)
@@ -140,9 +212,14 @@ def export_rollout_video_for_checkpoint(
 
 def main() -> None:
     args = parse_args()
+    checkpoint = args.checkpoint
+    if checkpoint is None:
+        if args.run_dir is None:
+            fail("Pass either --checkpoint or --run-dir.")
+        checkpoint = resolve_best_checkpoint_from_run_dir(args.run_dir)
     summary = export_rollout_video_for_checkpoint(
         task=args.task,
-        checkpoint=args.checkpoint,
+        checkpoint=checkpoint,
         output_dir=args.output_dir,
         output_video=args.output_video,
         seed=args.seed,

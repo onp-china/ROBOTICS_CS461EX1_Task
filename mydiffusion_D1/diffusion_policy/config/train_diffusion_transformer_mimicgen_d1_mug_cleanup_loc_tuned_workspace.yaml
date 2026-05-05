@@ -18,8 +18,9 @@ policy:
 task:
   env_runner:
     n_test: 12
-    n_test_vis: 1
+    n_test_vis: 0
     n_envs: 4
+    enable_render: False
   dataset:
     near_object_threshold: 0.08
     near_object_oversample_ratio: 4

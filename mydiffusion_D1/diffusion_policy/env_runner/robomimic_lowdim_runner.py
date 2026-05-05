@@ -65,15 +65,43 @@ class _SingleEnvVectorAdapter:
         return [self.env.get_rollout_debug_metrics()]
 
 
-def create_env(env_meta, obs_keys):
+class _MetricOnlyVideoWrapper:
+    def __init__(self, env):
+        self.env = env
+        self.file_path = None
+
+        class _NullRecorder:
+            @staticmethod
+            def stop():
+                return None
+
+            @staticmethod
+            def is_ready():
+                return False
+
+        self.video_recoder = _NullRecorder()
+
+    def reset(self, **kwargs):
+        return self.env.reset(**kwargs)
+
+    def step(self, action):
+        return self.env.step(action)
+
+    def render(self, *args, **kwargs):
+        return self.file_path
+
+    def __getattr__(self, name):
+        return getattr(self.env, name)
+
+
+def create_env(env_meta, obs_keys, enable_render):
     ObsUtils.initialize_obs_modality_mapping_from_dict(
         {'low_dim': obs_keys})
     env = EnvUtils.create_env_from_metadata(
         env_meta=env_meta,
         render=False, 
-        # Rollout video export calls sim.render(), which requires an
-        # offscreen render context to be initialized up front.
-        render_offscreen=True,
+        # Only request an offscreen context when a rollout needs video.
+        render_offscreen=bool(enable_render),
         use_image_obs=False, 
     )
     return env
@@ -105,7 +133,8 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
             past_action=False,
             abs_action=False,
             tqdm_interval_sec=5.0,
-            n_envs=None
+            n_envs=None,
+            enable_render=False
         ):
         """
         Assuming:
@@ -149,37 +178,45 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
             env_meta['env_kwargs']['controller_configs']['control_delta'] = False
             rotation_transformer = RotationTransformer('axis_angle', 'rotation_6d')
 
+        self.enable_render = bool(enable_render)
+
         def env_fn():
             robomimic_env = create_env(
                     env_meta=env_meta, 
-                    obs_keys=obs_keys
+                    obs_keys=obs_keys,
+                    enable_render=self.enable_render
                 )
             # hard reset doesn't influence lowdim env
             # robomimic_env.env.hard_reset = False
-            return MultiStepWrapper(
-                    VideoRecordingWrapper(
-                        RobomimicLowdimWrapper(
-                            env=robomimic_env,
-                            obs_keys=obs_keys,
-                            init_state=None,
-                            render_hw=render_hw,
-                            render_camera_name=render_camera_name
-                        ),
-                        video_recoder=VideoRecorder.create_h264(
-                            fps=fps,
-                            codec='h264',
-                            input_pix_fmt='rgb24',
-                            crf=crf,
-                            thread_type='FRAME',
-                            thread_count=1
-                        ),
-                        file_path=None,
-                        steps_per_render=steps_per_render
+            lowdim_env = RobomimicLowdimWrapper(
+                env=robomimic_env,
+                obs_keys=obs_keys,
+                init_state=None,
+                render_hw=render_hw,
+                render_camera_name=render_camera_name
+            )
+            if self.enable_render:
+                wrapped_env = VideoRecordingWrapper(
+                    lowdim_env,
+                    video_recoder=VideoRecorder.create_h264(
+                        fps=fps,
+                        codec='h264',
+                        input_pix_fmt='rgb24',
+                        crf=crf,
+                        thread_type='FRAME',
+                        thread_count=1
                     ),
-                    n_obs_steps=env_n_obs_steps,
-                    n_action_steps=env_n_action_steps,
-                    max_episode_steps=max_steps
+                    file_path=None,
+                    steps_per_render=steps_per_render
                 )
+            else:
+                wrapped_env = _MetricOnlyVideoWrapper(lowdim_env)
+            return MultiStepWrapper(
+                wrapped_env,
+                n_obs_steps=env_n_obs_steps,
+                n_action_steps=env_n_action_steps,
+                max_episode_steps=max_steps
+            )
 
         env_fns = [env_fn] * n_envs
         env_seeds = list()
@@ -197,10 +234,9 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
                     enable_render=enable_render):
                     # setup rendering
                     # video_wrapper
-                    assert isinstance(env.env, VideoRecordingWrapper)
-                    env.env.video_recoder.stop()
                     env.env.file_path = None
-                    if enable_render:
+                    if enable_render and self.enable_render:
+                        env.env.video_recoder.stop()
                         filename = pathlib.Path(output_dir).joinpath(
                             'media', wv.util.generate_id() + ".mp4")
                         filename.parent.mkdir(parents=False, exist_ok=True)
@@ -224,10 +260,9 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
                 enable_render=enable_render):
                 # setup rendering
                 # video_wrapper
-                assert isinstance(env.env, VideoRecordingWrapper)
-                env.env.video_recoder.stop()
                 env.env.file_path = None
-                if enable_render:
+                if enable_render and self.enable_render:
+                    env.env.video_recoder.stop()
                     filename = pathlib.Path(output_dir).joinpath(
                         'media', wv.util.generate_id() + ".mp4")
                     filename.parent.mkdir(parents=False, exist_ok=True)
