@@ -59,6 +59,33 @@ def _extract_first_mean_score(log_data: dict) -> float | None:
     return None
 
 
+def _collect_test_rollout_records(log_data: dict) -> list[dict]:
+    records = []
+    for key, value in log_data.items():
+        prefix = "test/sim_video_path_"
+        if not key.startswith(prefix):
+            continue
+        seed = key[len(prefix):]
+        record = {
+            "seed": int(seed),
+            "video_path": str(value),
+            "task_success": float(log_data.get(f"test/task_success_{seed}", 0.0)),
+            "ready_to_grasp": float(log_data.get(f"test/ready_to_grasp_{seed}", 0.0)),
+            "min_eef_object_distance": float(log_data.get(f"test/min_eef_object_distance_{seed}", float("inf"))),
+            "object_displacement": float(log_data.get(f"test/object_displacement_{seed}", 0.0)),
+        }
+        records.append(record)
+    records.sort(key=lambda item: item["seed"])
+    return records
+
+
+def _best_rollout_alias_name(record: dict) -> str:
+    seed = int(record["seed"])
+    if float(record.get("task_success", 0.0)) > 0.0:
+        return f"best_success_seed{seed}.mp4"
+    return f"best_candidate_seed{seed}.mp4"
+
+
 def _parse_checkpoint_name(checkpoint_name: str) -> tuple[int, str, float] | None:
     match = CHECKPOINT_RE.match(checkpoint_name)
     if not match:
@@ -183,7 +210,7 @@ def export_rollout_video_for_checkpoint(
     runner_cfg.n_train = 0
     runner_cfg.n_train_vis = 0
     runner_cfg.n_test = int(n_test)
-    runner_cfg.n_test_vis = min(int(n_test), 1)
+    runner_cfg.n_test_vis = int(n_test)
     runner_cfg.test_start_seed = int(seed)
     runner_cfg.n_envs = int(n_envs)
     runner_cfg.enable_render = True
@@ -195,9 +222,35 @@ def export_rollout_video_for_checkpoint(
     after_media = _collect_media_paths(media_dir)
     new_media = sorted(after_media - before_media)
 
+    rollout_records = _collect_test_rollout_records(log_data)
     exported_video = None
-    if new_media:
+    best_video_path = None
+    alias_video_path = None
+    if rollout_records:
+        best_record = max(
+            rollout_records,
+            key=lambda item: (
+                item["task_success"],
+                item["ready_to_grasp"],
+                -item["min_eef_object_distance"],
+                item["object_displacement"],
+                -item["seed"],
+            ),
+        )
+        best_video_path = Path(best_record["video_path"]).expanduser().resolve()
+        if best_video_path.is_file():
+            alias_video_path = resolved_output_dir / _best_rollout_alias_name(best_record)
+            shutil.copy2(best_video_path, alias_video_path)
+        if output_video and best_video_path.is_file():
+            target = Path(output_video).expanduser().resolve()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(best_video_path, target)
+            exported_video = target
+        else:
+            exported_video = alias_video_path if alias_video_path is not None else best_video_path
+    elif new_media:
         exported_video = new_media[0]
+        best_video_path = exported_video
         if output_video:
             target = Path(output_video).expanduser().resolve()
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -209,6 +262,11 @@ def export_rollout_video_for_checkpoint(
         "checkpoint": str(checkpoint_path),
         "run_dir": str(resolved_output_dir),
         "mean_score": _extract_first_mean_score(log_data),
+        "task_success_rate": log_data.get("test/task_success_rate"),
+        "pregrasp_ready_rate": log_data.get("test/pregrasp_ready_rate"),
+        "best_rollout_video_path": str(best_video_path) if best_video_path is not None else None,
+        "best_rollout_alias_path": str(alias_video_path) if alias_video_path is not None else None,
+        "rollout_records": rollout_records,
         "video_path": str(exported_video) if exported_video is not None else None,
     }
 

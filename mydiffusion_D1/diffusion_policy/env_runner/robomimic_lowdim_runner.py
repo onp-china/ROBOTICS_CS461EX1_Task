@@ -433,6 +433,7 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
             # visualize sim
             video_path = all_video_paths[i]
             if video_path is not None:
+                log_data[prefix+f'sim_video_path_{seed}'] = str(video_path)
                 sim_video = wandb.Video(video_path)
                 log_data[prefix+f'sim_video_{seed}'] = sim_video
 
