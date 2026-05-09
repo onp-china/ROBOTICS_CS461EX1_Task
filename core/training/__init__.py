@@ -1,4 +1,10 @@
-"""core.training: 训练循环（DiffusionTrainer）和配置（TrainingConfig）。"""
+"""core.training: 训练循环（DiffusionTrainer）和配置（TrainingConfig）。
+
+实现细节：
+- 使用 diffusers DDPMScheduler（squaredcos_cap_v2，与 train.py 默认一致）
+- 使用 diffusion_policy LinearNormalizer 自动归一化 obs/action
+- epsilon prediction，标准 DDPM 训练损失
+"""
 from __future__ import annotations
 
 import os
@@ -11,6 +17,7 @@ from typing import Any, Optional
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from torch.amp import autocast, GradScaler
 from tqdm import tqdm
 
@@ -134,15 +141,58 @@ class DiffusionTrainer:
         train_loader,  # DataLoader
         val_loader,    # DataLoader
         cfg: TrainingConfig,
+        model_cfg: dict | None = None,
+        data_cfg: dict | None = None,
+        dataset=None,           # 用于自动创建 normalizer（必须有 get_normalizer 方法）
+        normalizer=None,        # 已有的 LinearNormalizer 实例（覆盖 dataset）
+        noise_scheduler=None,   # diffusers DDPMScheduler；为 None 时创建默认 cosine schedule
+        n_obs_steps: int = 2,
+        obs_as_cond: bool = True,
+        obs_keys: list[str] | None = None,   # eval 端要用，存进 ckpt
+        use_history: bool = False,           # True = 训练时 cond 用完整 obs history
     ):
         self.model = model
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.cfg = cfg
+        self.model_cfg = dict(model_cfg) if model_cfg else {}
+        self.data_cfg = dict(data_cfg) if data_cfg else {}
+        self.n_obs_steps = n_obs_steps
+        self.obs_as_cond = obs_as_cond
+        self.obs_keys = list(obs_keys) if obs_keys else None
+        self.use_history = use_history
 
         # --- 设备 ---
         self.device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
+
+        # --- Normalizer（关键：归一化 obs / action）---
+        if normalizer is not None:
+            self.normalizer = normalizer
+        elif dataset is not None and hasattr(dataset, "get_normalizer"):
+            print("Building LinearNormalizer from dataset stats...")
+            self.normalizer = dataset.get_normalizer()
+        else:
+            raise ValueError(
+                "DiffusionTrainer 需要 normalizer 或 dataset 之一。"
+                "请传入 dataset=... 让其自动构建 LinearNormalizer。"
+            )
+        self.normalizer.to(self.device)
+
+        # --- Noise Scheduler（标准 DDPM）---
+        if noise_scheduler is None:
+            from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+            noise_scheduler = DDPMScheduler(
+                num_train_timesteps=100,
+                beta_start=0.0001,
+                beta_end=0.02,
+                beta_schedule="squaredcos_cap_v2",
+                variance_type="fixed_small",
+                clip_sample=True,
+                prediction_type="epsilon",
+            )
+        self.noise_scheduler = noise_scheduler
+        self.num_train_timesteps = noise_scheduler.config.num_train_timesteps
 
         # --- cuDNN ---
         if torch.cuda.is_available():
@@ -356,23 +406,47 @@ class DiffusionTrainer:
 
     def _compute_loss(self, obs, action) -> torch.Tensor:
         """
-        计算单步损失。默认是简单的 MSE，可以子类重写。
+        标准 DDPM 训练损失（与 diffusion_policy 完全对齐）：
+            1. 用 LinearNormalizer 归一化 obs 和 action
+            2. 用 DDPMScheduler.add_noise 加噪（cosine schedule）
+            3. 模型预测 noise（epsilon prediction）
+            4. MSE(pred, noise)
         """
         B = action.shape[0]
         device = action.device
 
-        # 模拟 diffusion noise schedule
-        t = torch.randint(0, 100, (B,), device=device)
-        noise = torch.randn_like(action)
-        alpha_t = 1.0 - t.float() / 100.0
-        noisy = alpha_t.view(B, 1, 1) * action + (1 - alpha_t).view(B, 1, 1) * noise
+        # 1. 归一化（关键）
+        nobs = self.normalizer["obs"].normalize(obs)
+        nact = self.normalizer["action"].normalize(action)
 
-        # 这里用的是模型的原始 forward，真实项目中会走完整的 diffusion 过程
-        # 为了让 core/training 跑通（不依赖完整 diffusion_policy），用一个简化的 MSE 代理
-        pred = self.model(sample=noisy, timestep=t % 100, cond=obs)
+        # 2. obs 作为 condition
+        if self.obs_as_cond:
+            if self.use_history:
+                # Option A：cond = 完整 obs history（每步看到所有历史）
+                cond = nobs
+            else:
+                # 标准做法：cond = 最近 n_obs_steps 步
+                cond = nobs[:, : self.n_obs_steps]
+            trajectory = nact
+        else:
+            # 不作为条件：把 obs concat 到 action 维度上
+            cond = None
+            trajectory = torch.cat([nact, nobs], dim=-1)
+
+        # 3. 标准 DDPM 加噪
+        noise = torch.randn_like(trajectory)
+        timesteps = torch.randint(
+            0, self.num_train_timesteps, (B,), device=device
+        ).long()
+        noisy_traj = self.noise_scheduler.add_noise(trajectory, noise, timesteps)
+
+        # 4. 模型预测
+        pred = self.model(sample=noisy_traj, timestep=timesteps, cond=cond)
         if isinstance(pred, tuple):
             pred = pred[0]
-        loss = torch.nn.functional.mse_loss(pred, noise)
+
+        # 5. epsilon prediction 损失
+        loss = F.mse_loss(pred, noise)
         return loss
 
     def _eval(self) -> float:
@@ -397,7 +471,10 @@ class DiffusionTrainer:
         return total_loss / max(n, 1)
 
     def _save_checkpoint(self, path: Path, epoch: int, train_loss: float):
-        """保存 PyTorch checkpoint。"""
+        """保存 PyTorch checkpoint，包含模型超参、normalizer、scheduler config，自描述加载。"""
+        ns_cfg = dict(self.noise_scheduler.config)
+        ns_cfg.pop("_use_default_values", None)
+
         ckpt = {
             "epoch": epoch,
             "model_state_dict": self.model.state_dict(),
@@ -406,6 +483,17 @@ class DiffusionTrainer:
             "train_loss": train_loss,
             "history": self.history,
             "global_step": self.global_step,
+            "model_class": type(self.model).__name__,
+            "model_module": type(self.model).__module__,
+            "model_cfg": self.model_cfg,
+            "data_cfg": self.data_cfg,
+            "n_obs_steps": self.n_obs_steps,
+            "obs_as_cond": self.obs_as_cond,
+            "obs_keys": self.obs_keys,
+            "use_history": self.use_history,
+            "noise_scheduler_cfg": ns_cfg,
+            "noise_scheduler_class": type(self.noise_scheduler).__name__,
+            "normalizer_state_dict": self.normalizer.state_dict(),
         }
         if self.ema_state is not None:
             ckpt["ema_state_dict"] = self.ema_state
